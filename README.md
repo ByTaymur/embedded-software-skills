@@ -65,3 +65,4 @@ Komutlar için `commands/`, agent'lar için `agents/` klasörünü aynı şekild
 Bu depo [MIT lisansı](LICENSE) ile lisanslanmıştır.
 
 **İstisna:** `skills/third-party/` altındaki skill'ler dış kaynaklardan vendor edilmiştir ve **kendi lisanslarını taşır** — `dashboarding` (Grafana, Apache-2.0) ve `dd-logs` (Datadog, MIT). Her birinin `LICENSE` dosyası kendi klasöründedir ve korunmalıdır.
+
