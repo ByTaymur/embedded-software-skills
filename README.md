@@ -1,15 +1,5 @@
 # embedded-software-skills
 
-> AI skills, slash commands & agents for embedded software / STM32 firmware development.
-
-Gömülü yazılıma özgü tüm **skill**, **slash command** ve **agent** tanımlarımın tek merkezde toplandığı, **projeden bağımsız (proje-agnostik)** ve **yapay-zeka-bağımsız (araç-agnostik)** depo. Buradan tek tek projelere veya aracın global dizinine (`~/.claude/`, `~/.config/…`, `.clinerules`, `.cursor/…` vb.) kopyalanır ya da symlink ile bağlanır.
-
-> **İki değişmez kural:**
-> 1. **Projeye sabit hiçbir şey yok.** Pin, parametre, MCU, motor, mutlak yol, proje adı — hiçbiri buraya yazılmaz. Projeye özel her şey o projenin kök bellek dosyasında (`CLAUDE.md` — ya da kullandığın aracın karşılığı: `AGENTS.md`, `.clinerules`, `.cursorrules`) durur.
-> 2. **Markaya/araca sabit kimlik yok.** Hiçbir agent "sen falanca araçsın" demez; personalar nötrdür. Böylece herhangi bir yapay zekâ kod asistanı (Claude Code, Cline, Cursor, Kilo Code, …) bu tanımları olduğu gibi kullanabilir.
->
-> Buradakiler "ana kurallar" ve yeniden kullanılabilir araçlardır; projeler onların üstüne kendi verisini koyar.
-
 ## İçerik
 
 ### skills/
