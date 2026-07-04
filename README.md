@@ -48,7 +48,6 @@ Komutlar için `commands/`, agent'lar için `agents/` klasörünü aynı şekild
 - **Her skill kendi kendine yeter:** kendi `commands/` ve `references/`'ını taşır. Skill'e bağlı komut o skill'in içindedir.
 - **Progressive disclosure:** SKILL.md kısa; ağır detay `references/`'ta ve talep üzerine yüklenir (bkz. `stm32-firmware-workflow`). Bu desen standarttır — daha az bağlam, daha az token.
 - **Ham çıktı girmez:** build log'u, workspace dosyası, dev artefaktı depoya konmaz (bkz. `.gitignore`).
-- Depo envanteri ve temizlik geçmişi: [ENVANTER.md](ENVANTER.md).
 
 ## Lisans
 
