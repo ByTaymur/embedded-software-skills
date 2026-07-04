@@ -1,0 +1,127 @@
+# <PROJECT NAME>
+## Claude Code Project Memory (SUB-RULES)
+
+> Every session reads this FIRST. Update it in the same commit whenever hardware/software changes.
+> General working methodology lives in the `stm32-firmware-workflow` skill (MAIN RULES).
+> This file holds ONLY data specific to this project. Do not carry values from other projects.
+> Talk to the user in Turkish; this file and code identifiers are in English.
+
+---
+
+## 0. Feature Toggles
+> Turn skill features on `[x]` / off `[ ]` for THIS project. The skill applies only ON features.
+- [x] scope_guard          # konu dışına çıkmadan önce uyar + onay al
+- [x] min_workload         # her zaman en az değişiklik
+- [x] cubemx_first         # .ioc otoritesi / USER CODE disiplini (CubeMX yoksa kapat)
+- [x] non_blocking         # HAL_Delay / busy-wait yasak
+- [x] task_placement       # ISR vs background ayrımı
+- [x] register_verify      # register/AF'yi datasheet'e doğrula
+- [x] single_source_params # sabitler tek config header'da
+- [x] deep_engineering     # derin gömülü referansı yükle
+- [x] doc_sync             # CLAUDE.md'yi aynı commit'te güncelle
+- [ ] git_protocol         # branch-per-session + commit formatı + günlük
+- [x] onboarding           # yeni projede tam soru akışı
+- [x] terse_output         # kısa, doğrudan cevap
+
+---
+
+## 1. Project Summary
+<What the device/firmware does — 1–2 lines.>
+
+| Item | Value |
+|------|-------|
+| MCU | <STM32Fxxx — package, core clock, Flash, SRAM> |
+| Toolchain / IDE | <Keil MDK / STM32CubeCLT+GCC / CubeIDE> |
+| CubeMX | <Yes, `project.ioc` / No, hand-written LL> |
+| Control loop | <if any: frequency + driving TIM/IRQ> |
+| Code comment language | <Turkish / English> |
+
+## 2. Clock Tree & Power
+- **Clock source:** <HSE value / HSI>, PLL <...>, SYSCLK <MHz>, APB1 <MHz>, APB2 <MHz>, timer clk <MHz>
+- **Power rails:** <input V, regulators>
+- **Power stage (if any):** <DC-link V, gate driver, IGBT/MOSFET, dead-time, switching freq>
+
+## 3. Pinout (detailed)
+| Pin | Signal | Dir/Mode | AF | Pull | Speed | Active/Init | Note |
+|-----|--------|----------|----|----|-------|-------------|------|
+| <PA8> | <TIM1_CH1> | <AF> | <AF1> | <none> | <high> | <—> | <high-side PWM U> |
+| <PA4> | <ADC1_IN4> | <analog> | <—> | <none> | <—> | <—> | <phase A current> |
+| <PB14> | <GPIO_LED> | <output> | <—> | <none> | <low> | <active-high, init 0> | <heartbeat LED> |
+
+> ⚠ PCB HARDWARE TRAPS — fill carefully:
+> - <Pins hard-wired to GND/VCC on the PCB → unusable as I/O>
+> - <Peripherals physically unavailable / not routed>
+> - <Required remaps (F1)>
+> - <External pull / level-shift / protection constraints>
+
+## 4. Peripheral & DMA / IRQ Map
+| Peripheral | Use | Notes |
+|-----------|-----|-------|
+| <TIM1> | <3-phase PWM, center-aligned> | <ARR, dead-time> |
+| <TIM2> | <encoder interface> | <PPR/CPR> |
+| <ADC1/ADC2> | <simultaneous current sense> | <channels, DMA> |
+
+| DMA | Request | Stream/Channel | Mode | Prio |
+|-----|---------|----------------|------|------|
+| <DMA2> | <ADC1> | <Stream0> | <circular> | <high> |
+
+| IRQ | Purpose | NVIC prio | Freq |
+|-----|---------|-----------|------|
+| <TIM3_IRQn> | <control loop> | <0> | <10 kHz> |
+
+## 5. Parameter Single-Source
+All constants live in: `<..._config.h>`
+```c
+#define <PARAM>   <value>   // <unit / why this value>
+```
+> Do not embed magic numbers elsewhere. A value changes only here.
+
+## 6. Software Architecture
+- **ISR / control loop (<freq>):** <tasks: current read, PWM update, encoder, protection, control PI/PID>
+- **main while(1) (background):** <telemetry/UART, Vbus/temp, LED, watchdog>
+- **State machine:** <INIT → ALIGN → RUN → FAULT (+ recovery)>
+
+## 7. Known Issues
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | <...> | Open / Partial / Needs test |
+
+## 8. Build & Flash
+```bash
+# build
+<command>
+# flash
+<command>
+```
+Target memory: <IROM 0x08000000 size; IRAM 0x20000000 size>. Linker script: <name>.
+
+## 9. File Layout
+```
+<project>/
+├── CLAUDE.md
+├── firmware/            # active code
+│   ├── Src/ Inc/ Drivers/ ...
+│   └── <project>.ioc
+├── docs/               # documentation
+│   └── changelog/<GUNLUK.md>
+└── archive/            # read-only old versions/references
+```
+
+## 10. Documentation Map
+| Question | File |
+|----------|------|
+| <system architecture> | <docs/...> |
+| <pinout> | <docs/...> |
+| <development log> | <docs/changelog/...> |
+
+## 11. Git / Session Protocol
+- [ ] Active (branch-per-session + dev log) → see skill `references/git-workflow.md`
+- [ ] Inactive
+
+Dev log file: `<docs/changelog/GUNLUK.md>`
+
+## 12. Project-Specific Extra Rules
+<Anything that adds to or overrides the main rules for THIS project. Otherwise empty.>
+
+---
+*Last updated: YYYY-MM-DD*
