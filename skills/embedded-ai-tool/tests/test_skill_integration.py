@@ -12,7 +12,7 @@ class PortableSkillTests(unittest.TestCase):
     def test_launcher_and_imports_after_relocation(self):
         source = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
+            root = Path(folder).resolve()  # Windows runner TEMP is an 8.3 short path (RUNNER~1)
             scripts = root / "skill copy" / "scripts"
             shutil.copytree(source / "scripts", scripts, ignore=shutil.ignore_patterns("__pycache__"))
             work = root / "firmware project"
