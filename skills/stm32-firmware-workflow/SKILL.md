@@ -116,6 +116,11 @@ Deep guide (ISR/volatile/critical-section, DMA & cache coherency, memory barrier
 
 IDE-less (STM32CubeCLT + GCC/CMake) or Keil/CubeIDE — the project's toolchain is in its `CLAUDE.md`. Build scripts, ST-Link/STM32CubeProgrammer CLI flashing, and a compile/linker/clock troubleshooting table: `references/toolchain-build-flash.md`.
 
+When `embedded-ai-tool` is installed, use it for requested profile-driven OpenOCD
+readings, traces, UID/build verification, build/flash, or target control. It is an
+optional execution tool; the project's hardware facts, authorization, and live-test
+requirements still govern. Source-only work does not require it.
+
 ---
 
 ## 5. Git & session workflow (only when `git_protocol` is ON)

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Embedded AI Tool"
+  short_description: "Profile-driven OpenOCD firmware development"
+  default_prompt: "Use $embedded-ai-tool to inspect the target profile, verify its identity and build, and carry out the requested firmware measurements."

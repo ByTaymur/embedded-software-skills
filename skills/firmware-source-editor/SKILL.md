@@ -76,3 +76,7 @@ Projeye özel pin/parametre değerleri **proje `CLAUDE.md`'de**; aşağıdakiler
 - **ISR kısa kalır** — zaman kritik iş ISR'de, gerisi ana döngüde; ISR'de blocking/heavy iş yok.
 
 > Bu skill kod düzenler; derleme/flash için ayrı toolchain akışı (bkz. `stm32-firmware-workflow`) kullanılır.
+
+`embedded-ai-tool` kuruluysa, kullanıcının istediği derleme/flash ve canlı kart
+ölçümü o skill'in profil tabanlı aracıyla yapılabilir. Kaynak düzenleme bu skill'de
+kalır; araç yetkisi hedef proje talimatları ve kullanıcının mevcut isteğinden gelir.

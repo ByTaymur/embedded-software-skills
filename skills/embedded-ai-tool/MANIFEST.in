@@ -1,0 +1,5 @@
+include README.md LICENSE SKILL.md
+include scripts/eat.py
+recursive-include agents *.yaml
+recursive-include references *.md
+recursive-include tests *.py

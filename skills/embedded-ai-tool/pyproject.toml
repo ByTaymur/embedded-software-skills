@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "embedded-ai-tool"
+version = "0.1.0"
+description = "Profile-driven OpenOCD development tools for humans and AI agents"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = ["pyelftools>=0.32,<1"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development :: Embedded Systems",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.9,<1", "build>=1,<2"]
+
+[project.urls]
+Repository = "https://github.com/ByTaymur/embedded-software-skills"
+Issues = "https://github.com/ByTaymur/embedded-software-skills/issues"
+
+[project.scripts]
+eat = "embedded_ai_tool.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["scripts"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "BLE", "ISC", "RUF"]
+allowed-confusables = ["ı"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_tool.py" = ["E402"]
