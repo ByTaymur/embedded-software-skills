@@ -1,7 +1,12 @@
 # Hedefte canlı program yorumlayıcısı — F4.1 tasarımı
 
-Durum: öneri; çalışan özellik veya donanım uyumluluğu iddiası değildir.
-Kapsam: stub içine eklenecek C99 bytecode yorumlayıcısı ve host sözleşmesi.
+Durum: F4.2 + F4.3 ilk dilim host üzerinde uygulandı; kart ve fiziksel ölçüm yoktur.
+Uygulanan: C99 görüntü/CRC/doğrulayıcı, bütçeli zamanlayıcı, GPIO/ADC/PWM,
+timer/olay, zorunlu dead-man, iki banka ve mailbox v2, durum göçü, ayrı olay halkası;
+Python JSON derleyicisi, read/write yükleme, CLI ve MCP araçları.
+`26 IRQ_BIND` ve `41 NATIVE_CALL` kapalıdır ve `DISABLED` ile reddedilir.
+Bu dilimin kesin ikili yerleşimi ve sınırlamaları aşağıdaki §13'tedir.
+Kapsam: stub içine eklenen C99 bytecode yorumlayıcısı ve host sözleşmesi.
 Mevcut davranış: [live-control.md](live-control.md), kelime sahipliği:
 [stub-protocol.md](stub-protocol.md), port: [stub/README.md](../stub/README.md).
 Buradaki önerilen sürümler mevcut sürüm 1 kaynaklarının yerine geçmez.
@@ -440,12 +445,12 @@ native ABI, halka sürümü, katalog hash'i. 256 B alan sabit özet/hash taşır
 pin kataloğu host MCU dosyasındadır. Hash/sürüm uyuşmadan kimlik kullanılamaz.
 Desteklenmeyen özellik erken ret; host gecikmeli komutlarla taklit etmez.
 
-## 10. F3 ile ortak örnek/olay halkası
+## 10. Yorumlayıcı olay halkası (F3'ten ayrı)
 
-Bu F3 için önerilen sözleşmedir; mevcut F3 uygulaması iddiası değildir.
-Yorumlayıcı EMIT, port örnekleyici ve F3 aynı kayıt biçimini kullanmalıdır.
+F3 örnekleyicisi ayrı, çok kanallı yüksek hızlı halkadır; olay halkası bu biçimdir.
+Yorumlayıcı EMIT ve sistem olayları `eat_ring` içindeki aşağıdaki biçimi kullanır.
+`eat_sampler` ile bellek, magic veya kod bağımlılığı yoktur.
 Tek fiziksel üretici poll bağlamıdır; ISR/DMA sonlu staging kuyruğuna yazar.
-Yüksek hızlı F3 ayrı halka kullanabilir, format/sayaç kuralları aynıdır.
 
 32 B başlık, sekiz u32: format=1, record_bytes=32, capacity, write_seq,
 read_seq_ack, dropped, time_unit_ns, clock_id. Hepsini stub yazar;
@@ -457,7 +462,7 @@ Kapasite ikinin kuvveti ve <2^31; sıra u32, doluluk unsigned farktır.
 | seq | 0/u32 | Yayım sıra numarası, en son yazılır |
 | timestamp | 4/u32 | Yakalama zamanı; tick veya örnekleme saati |
 | generation | 8/u32 | Üretim anındaki program sürümü |
-| source | 12/u16 | Görev/F3 kaynağı; 0 sistem |
+| source | 12/u16 | Görev kaynağı; 0 sistem |
 | kind | 14/u8 | 1 sample, 2 pin, 3 timer, 4 threshold, 5 message, 6 fault, 7 commit |
 | flags | 15/u8 | Bit0 veri geçerli, bit1 gecikmiş, bit2 staging kaybı |
 | channel | 16/u32 | Profil/manifest kanalı |
@@ -517,9 +522,9 @@ pin işlevleri incelenmiş profil/port verisidir.
 
 Uygulama kabulü: iki taşıma ile aynı görüntü/sonuç; bozuk görüntü testleri,
 C99 taşınabilir derleme, bütçe/bellek, göç/commit yarışları için host C testleri;
-ardından hedefte jitter, watchdog, kesinti ve safe ölçümü. F3 ile üretici/kayıp/
-cursor format testi ortak kabul kapısıdır. F4.1 yalnız tasarımdır; bu testler yapılmış
-sayılmaz ve mevcut host testleri donanım kanıtına dönüştürülmez.
+ardından hedefte jitter, watchdog, kesinti ve safe ölçümü. Olay halkasının üretici/
+kayıp/cursor testleri F3'ten bağımsızdır. İlk dilimin host testleri donanım kanıtına
+dönüştürülmez; karttaki kabul senaryoları henüz gerçekleştirilmedi.
 
 ## 12. Alternatifler ve açık kararlar
 
@@ -544,7 +549,7 @@ bütçe hedeflerimizin kanıtı değildir.
 
 | Açık soru | İlk karar / kapanış ölçütü |
 |---|---|
-| F3 formatı ve saat | Bu 32 B formatı ortaklaştır; F3 sahibiyle sürüm/cursor testi kesinleştir |
+| F3 formatı ve saat | F3 ayrı yüksek hızlı örnekleyici; bu 32 B olay halkası bağımsızdır |
 | Gerçek flash/RAM/tick | Küçük 32 bit hedefte map/stack/WCET ölç; aşılırsa özellik düşür |
 | Safe birleşimi kapasitesi | İlk sürüm 16 satır; sığmayan geçişe açık ret |
 | Periferal yeniden başlatma gecikmesi | Port deadline raporu; çok poll geçişinde görev atomikliği |
@@ -558,3 +563,124 @@ bütçe hedeflerimizin kanıtı değildir.
 Uygulama sırası: biçim/doğrulayıcı C testleri → zamanlayıcı → iki bankalı protokol/
 host derleyici → port/F3 → iki taşıma/fiziksel kabul. Her aşama capability ile
 ilan edilir; tasarımda bulunması destek iddiası değildir.
+
+## 13. İlk dilimin kesin sözleşmesi ve sınırları
+
+Bu bölüm §7'de açık bırakılmış satır biçimlerini tamamlar. Görüntü formatı ve bytecode
+sürümü 1'dir; başlık 136 B, tam yedi bölüm tanımı vardır. Bölüm başlangıcı 8 B hizalıdır;
+boş bölüm de tanımlanır. CRC dolgu dahil `total_bytes` üzerindedir. Sayılar little-endian'dır.
+Kimlikler host'ta UTF-8 adın CRC32 değeri `%65535+1` ile üretilir; çakışma ret sebebidir.
+Hedef, ad metni tutmaz. İlk dilimde tür ve ölçek yalnız u32/1'dir.
+
+| Bölüm türü | Satırın u32 alanları | Boyut |
+|---|---|---|
+| 1 görev | id, revision, entry_pc, code_count, var_first, var_count, allow_mask, code_hash, schema_hash, resource_hash, slice, reserved=0 | 48 B |
+| 2 kod | §4'teki sekiz baytlık komutlar | 8 B |
+| 3 değişken | task_id, var_id, type=1, scale=1, initial, min, max, preserve=0/1 | 32 B |
+| 4 parametre | id, value, min, max, type=1 | 20 B |
+| 5 olay/kanal | id, kind, channel, owner_task_id, period_ms, reserved=0 | 24 B |
+| 6 allow | §5'teki 12 kelime; id tekil, resource port kimliği | 48 B |
+| 7 safe | §5'teki dört kelime | 16 B |
+
+Görev PC aralıkları çakışamaz. `allow_mask` en fazla 16 satıra sahipliği gösterir.
+Bir kaynak tek satırla temsil edilir; ADC paylaşımı bu dilimde kapalıdır. GPIO
+function=0 giriş, function=1 çıkıştır; diğer işlev kimlikleri port kataloğundadır.
+Port zarfı bir kaynağın bütün safe adreslerini kapsamalıdır. Çıkış/PWM satırı safe
+satırı olmadan kabul edilmez. Safe tarifinde farklı registerlar gerekiyorsa kaynak
+zarfının `start,length` alanları hepsini kapsar; port her erişimi ayrıca denetler.
+Adresler opcode'a taşınmaz. Hash'ler tanılamadır; göç kararında gerçek kod, şema ve
+kaynak satırları karşılaştırılır; yalnız host hash'ine güvenilmez.
+
+Olay kind değerleri §10'daki 1..5 değerleridir. Aynı olay kimliği, aynı kind/channel
+ile farklı görevlerde yayım/abonelik satırı olabilir. `WAIT_EVENT.k` ve `EMIT.k`
+bu manifestin **satır indeksidir**. `period_ms` yalnız timer kind=3 için sıfırdan
+farklı olabilir. Commit sonrası mutlak takvim kurulur; geçen periyotlar tek olayda
+birleştirilir. ADC/eşik/pulse JSON adımları register/değişken/olay/timer koduna iner;
+pulse ayrı üretilmiş görevdir, örneklemeyi durdurmaz. Retrigger yalnız `ignore`;
+`restart` sessiz taklit edilmez, host'ta reddedilir. `YIELD` bir kez tüketilir ve
+sonraki komut PC'si sonraki tick'e saklanır.
+
+Port kancaları `eat_interp.h` içinde tanımlıdır. `allow_check`, `safe_check` ve
+`resource_check` 1=kabul, 0=ret; donanım ve prepare kancaları 0=tamam, 2=hata verir.
+Yalnız `analog_read` 1=pending verebilir. Bir görevde aynı anda tek ADC isteği vardır.
+ADC allow satırının min0/max0 alanları değer sınırıdır; min1 başlatmalar arasındaki
+asgari ms, max1 dönüşüm deadline ms'dir (0 ise 100 ms). Hız sınırı her START'ta
+denetlenir; aynı kaynak commit ile yeniden bağlansa da son başlatma zamanı korunur.
+Deadline içinde tamamlanmazsa bütün program safe olur. `resource_prepare` ve
+`gpio_configure` için çok poll süren PENDING geçişleri bu dilimde desteklenmez;
+böyle dönüş güvenlik hatasıdır. `safe_stop`, ADC/PWM dahil bütün üreticileri keser.
+Kapalı ADC/PWM için kancalar NULL olabilir. `critical_enter/leave`, `publish/acquire`
+zorunludur; tek sahipli host test portunda boş olabilir, gerçek portta bellek
+tutarlılığı sözleşmesini sağlamalıdır. Halka tabanı 4 B hizalıdır; sayaç/seq yayımı
+tek hizalı u32 yazısıdır, bayt sırası dönüştürülür. `opcode_cost` çekirdek komutlarında
+1, donanım komutlarında önceden bildirilmiş 1..b maliyet döndürür; maliyet çalışırken
+değiştirilmez. Bu değerler gerçek WCET ölçümünün yerine geçmez.
+
+Entegrasyon: `EAT_INTERP_ENABLE=1` ile yeni iki C dosyasını derleyin. Önce mevcut
+`eat_stub_init`/`eat_embed_init`, sonra ayrı port/context ile `eat_interp_init`, sonra
+`eat_stub_attach_interp` çağrılır. Mailbox en az `EAT_INTERP_WORDS` olmalıdır; varsayılan
+yerleşim kontrol 0..255, rapor 256..511, banka0 512..2559, banka1 2560..4607,
+olay halkası 4608..5663'tür. `eat_embed.h` açık yapılandırmada boyutu otomatik seçer.
+Kapalı yapılandırma hiçbir yeni C link bağımlılığı eklemez ve v1 davranışını korur.
+Boot_id sıfır olamaz ve her boot'ta değişmesini port sağlamalıdır.
+
+Rapor, hedef byte order'ında 64 u32'dir. İndeks 0..14: rapor sürümü=1, bytecode=1,
+capability_hash, özellik bitleri (ADC=1/PWM=2/DIV=4), tasks, vars, timers, B, b,
+tick_ms=1, allow kapasitesi, safe kapasitesi, giriş kuyruğu kapasitesi, image_bytes,
+`sizeof(eat_interp)`. İndeks 16..23 aktif parametre gölgesidir; 26..31 GPIO_READ..
+PWM_SET maliyetleridir. Diğer kelimeler sıfırdır. Host görüntüdeki başlangıç
+parametreleri ile aktif parametre gölgesini ayırır. Aktif CRC, PARAM_SET ile değişmez.
+`state_seq`, ilgili kontrol durumu değiştiğinde ilerler; yalnız stub heartbeat artışı
+snapshot sayacını ilerletmez. Böylece ayrı bellek istekleriyle tutarlı durum okunabilir.
+
+Profilde mevcut `Pins`/`Policy` verilerine ek olarak incelenmiş port eşlemesi gerekir:
+`live.interpreter.capability_hash` ve `resources` nesnesi. Her pin girdisi `id`,
+`address`, `length` (varsayılan 4), `width` (32), `mask`, `functions` (işlev adı → port
+kimliği), isteğe bağlı `inputs` (tarif başlangıç girdileri), `limits.min0/max0/min1/max1`
+taşır. Host, tarif/pin limits ile zarfı daraltır; profildeki kimlikler hedefin sabit
+kataloğu/hash'iyle uyuşmalıdır. Adres/kimlik tahmin edilmez. Mailbox ve scratch
+çakışamaz; tüm bankalar/halka/rapor mailbox reserved alanının içindedir.
+
+CLI: `eat program get`, `set --file program.json` (veya `--json`), `stop
+--expected-generation N`, `param AD DEĞER --expected-generation N`, `message AD
+DEĞER --expected-generation N`, `events [--limit N] [--cursor N] [--boot-id N] [--consume]`.
+Değiştiriciler `--execute` olmadan çevrimdışı plan üretir. `events --consume` için de
+execute gerekir. MCP aynı yolu kullanır: program_get/program_set/task_add/task_remove/
+param_set/events_read. Görev ekle/sil için son başarılı yüklemenin kaynağı mevcut
+`*.pins.local.json` oturum kaydında tutulur; boot/generation/CRC uyuşmazsa düzenleme
+reddedilir. Hedef kaynak JSON tutmadığından kayıtsız göreve sessiz kaynak üretimi yoktur.
+Olay cursor'u boot_id'ye bağlıdır; kayıtlı boot bilgisi yoksa açık cursor ile `--boot-id`
+gerekir. Reset sonrası bayat cursor reddedilir. Ham timestamp yanında ilk gözleme göre
+genişletilmiş `timestamp_extended` döner; en uzun okuma aralığı 2^31-1 ms'dir.
+Tüketim sonrası `*.events.local.json` UID/boot/saat/cursor kaydı, ayrı CLI çağrılarında
+zaman sarmasını izler. Bu kayıt fiziksel ölçüm veya hedefteki program kaynağı değildir.
+V2 profilinde ham poke/pin/restore/RAM değiştirme yolu reddedilir; `safe --all`
+önce v2 STOP_SAFE kullanır. Ayrı v1 heartbeat API'si v2 magic'ine yazmaz; oturumun
+v2 heartbeat yolu açıkça ayrı seçilir. Genel debug/seri yazısına karşı izolasyon yoktur.
+
+Bu dilimin bilinçli sınırları ve gerekçeleri:
+
+- IRQ/native ve native manifesti kapalıdır; incelenmiş ISR/ABI/WCET bağlantısı olmadan
+  güvenli destek ilan edilemez. İlgili opcode `DISABLED` verir.
+- Değişen görevde açık timer-preserve şeması yoktur; timer sıfırlanır. Bilinmeyen
+  preserve isteği host'ta reddedilir. Değişmeyen görevin PC/register/değişken/bekleme/
+  timer durumu ve mutlak periyodik takvimi korunur; parametreler yeni açık değerlerdir.
+- Görev sırasını geriye taşıyan yeniden sıralama commit öncesi `MIGRATION` ile
+  reddedilir. Silme ve sona ekleme desteklenir. Üçüncü görev kümesi kopyası ayırmadan
+  yerinde göç yapılması bu kısıtın gerekçesidir. Askıda ADC varken commit de ret verir;
+  host otomatik tekrar denemez, açık yeni istek gerekir.
+- Eski+yeni safe satır sayısı kapasiteyi aşarsa (eş satırlar dahil) commit reddedilir.
+  Birleşim sadeleştirmesi sonraki dilimdedir; çelişen maskeler de önceden reddedilir.
+- CRC poll başına 64 B, doğrulama poll başına 8 tanım/komut işler. Başlık ve sabit
+  kapasiteli ilişki taramaları tek adımda bounded yapılır; bu taramaları ayrıca bölmek
+  ve port prepare'ı çok poll'a yaymak sonraki dilimdedir. Boyut/stack hedefleri §2'de
+  hedef olarak kalır; uygulama ek bölüm/takvim metadatası tutar, gerçek map/stack/WCET
+  ölçümü yapılmadı. Rapor context boyutunu bildirir, hedef bütçesine uyduğu iddia edilmez.
+- Tick altı tepkiler, restart pulse politikası, genel DSL, signed/ölçek dönüşümü,
+  watchdog/reset-safe ve iki gerçek taşımanın fiziksel kabulü sonraki işlerdir.
+
+Host kanıtı: `tests/test_interp.py`, gerçek C çekirdeği ve `tests/interp_harness.c`
+üzerinden bozuk görüntü, bütçe, zaman, olay, izin, dead-man, göç, CRC ve atomiklik;
+JSON → görüntü → read/write ve seri `eat_link` yüklemesi; §11'in 1–4 ve 10 mantık
+adımları. Ayrı taşınabilirlik testi thumb/riscv32/mipsel için C99 `-Wall -Wextra
+-Werror -pedantic` derler. Bu kanıtların kart ve fiziksel ölçüm karşılığı **Yok**tur.

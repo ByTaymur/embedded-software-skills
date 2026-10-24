@@ -8,6 +8,7 @@
 #define EAT_STUB_CORE_H
 
 #include <stdint.h>
+#include "eat_interp.h"
 
 #define EAT_MAGIC 0x53544145u /* bytes "EATS" in little-endian memory */
 #define EAT_PROTOCOL 1u
@@ -50,5 +51,11 @@ void eat_stub_poll(void);
 
 /* Call from the fault handler: replays the safe table, records the fault and marks the call failed. */
 void eat_stub_fault(uint32_t code);
+
+#if EAT_INTERP_ENABLE
+/* Initialize the separate port/context with eat_interp_init first, then attach it.
+ * v1 dispatch and safe table are replaced only after this explicit registration. */
+void eat_stub_attach_interp(eat_interp *ctx);
+#endif
 
 #endif

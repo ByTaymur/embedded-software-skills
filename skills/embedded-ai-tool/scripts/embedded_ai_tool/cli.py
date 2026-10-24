@@ -28,7 +28,7 @@ from .core import (
 )
 from .live import Session, run_live
 
-LIVE = {"peek", "poke", "pin", "safe", "ram", "stub", "reg", "fault", "watch-variables"}
+LIVE = {"peek", "poke", "pin", "safe", "ram", "stub", "reg", "fault", "watch-variables", "program"}
 SERVE_ALLOWED = LIVE | {"identity", "verify", "read", "measure"}
 
 
@@ -101,6 +101,32 @@ def parser():
 
 def live_parser(sub):
     """RAM-only live control commands; mutations stay plans until --execute."""
+    program = sub.add_parser("program", help="Hedefte canlı program yorumlayıcısı")
+    actions = program.add_subparsers(dest="action", required=True)
+    actions.add_parser("get")
+    setting = actions.add_parser("set")
+    source = setting.add_mutually_exclusive_group(required=True)
+    source.add_argument("--file")
+    source.add_argument("--json")
+    setting.add_argument("--expected-generation", type=int)
+    setting.add_argument("--execute", action="store_true")
+    for name in ("stop", "param", "message", "task-add", "task-remove"):
+        child = actions.add_parser(name)
+        child.add_argument("--expected-generation", type=int, required=True)
+        child.add_argument("--execute", action="store_true")
+        if name in ("param", "message"):
+            child.add_argument("item")
+            child.add_argument("value", type=lambda s: int(s, 0))
+        elif name == "task-add":
+            child.add_argument("--json", required=True)
+        elif name == "task-remove":
+            child.add_argument("task_id")
+    events = actions.add_parser("events")
+    events.add_argument("--limit", type=int, default=32)
+    events.add_argument("--cursor", type=int)
+    events.add_argument("--boot-id", type=lambda s: int(s, 0))
+    events.add_argument("--consume", action="store_true")
+    events.add_argument("--execute", action="store_true")
     reg = sub.add_parser("reg", help="SVD register adlarını listele veya oku")
     actions = reg.add_subparsers(dest="action", required=True)
     read = actions.add_parser("read")
@@ -286,6 +312,10 @@ def run(args):
             if session is None:
                 target.close()
     if args.command in LIVE:
+        if args.command == "program":
+            from .interp import run_program
+
+            return run_program(args, profile)
         return run_live(args, profile)
     if args.command == "serve":
         return serve(args, profile)
@@ -367,7 +397,8 @@ def serve(args, profile):
     try:
         session = Session(profile, target)
         stub = session.live.stub
-        present = stub is not None and stub.status()["magic_ok"]
+        present = bool(stub is not None and (stub.status()["magic_ok"] or (
+            session.live.config.get("interpreter") and target.read(stub.base, 32, 2) == [0x32544145, 2])))
     except BaseException:
         target.close()
         raise
@@ -384,7 +415,7 @@ def serve(args, profile):
         if period is None or target.closed:
             return
         try:
-            if not stub.heartbeat():
+            if not session.live.heartbeat():
                 emit({"event": "stub_missing", "error": "Mailbox magic yok; heartbeat yazılmadı"})
         except (ValueError, OSError) as exc:
             emit({"event": "heartbeat_failed", "error": str(exc)})

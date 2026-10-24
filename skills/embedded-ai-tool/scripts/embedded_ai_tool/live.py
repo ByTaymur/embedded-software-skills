@@ -277,6 +277,18 @@ class Live:
     def read_words(self, address, width, count):
         return self.target.read(address, width, count)
 
+    def refuse_program_mutation(self):
+        if self.config.get("interpreter") and self.stub and self.read_words(self.stub.base, 32, 1)[0] == 0x32544145:
+            raise ValueError("BUSY_PROGRAM: mailbox v2 için program komutlarını kullanın")
+
+    def heartbeat(self):
+        if self.stub is None:
+            return False
+        if self.config.get("interpreter"):
+            if self.target.increment_if(self.stub.base, 0x32544145, self.stub.address(WORD["host_hb"])):
+                return True
+        return self.stub.heartbeat()
+
     def verify_build(self):
         data = self.profile.data
         wanted = self.config.get("verify_build", "artifact" in data and bool(data.get("flash_ranges")))
@@ -396,6 +408,7 @@ class Live:
         return prepared
 
     def mutate(self, step):
+        self.refuse_program_mutation()
         address, width, mask, value = step["address"], step["width"], step["mask"], step["value"]
         if step.get("blind"):
             self.target.write(address, width, [value])
@@ -438,7 +451,7 @@ class Live:
         now = time.monotonic()
         if throttle and self._beat_at is not None and now - self._beat_at < self.stub.timeout_ms / 6000:
             return
-        self.stub.heartbeat()
+        self.heartbeat()
         self._beat_at = now
 
     def poll(self, step):
@@ -468,6 +481,7 @@ class Live:
         return {"address": address, "size": len(data), "sha256": digest(data)}
 
     def ram_load(self, data, address=None):
+        self.refuse_program_mutation()
         plan = self.ram_plan(data, address)
         self.verify_build()
         padded = data + b"\x00" * (-len(data) % 4)
@@ -490,6 +504,7 @@ class Live:
         return digest(raw[:size])
 
     def ram_run(self, entry, args, timeout_s):
+        self.refuse_program_mutation()
         if self.stub is None:
             raise ValueError("RAM çağrısı için live.mailbox ve çalışan stub gerekir")
         # Architecture-specific call bits come from the profile (Cortex-M Thumb: 1); none by default.
@@ -574,6 +589,7 @@ class Stub:
         self.live.target.write(self.address(word), 32, values)
 
     def arm(self, rows):
+        self.live.refuse_program_mutation()
         if len(rows) > self.capacity:
             raise ValueError(f"Güvenli durum tablosu kapasiteyi aşıyor ({self.capacity})")
         flat = [word for row in rows for word in row]
@@ -787,6 +803,7 @@ class Pins:
                  "pinler güvenli/reset durumunda olabilir")]
 
     def apply(self, plan):
+        self.live.refuse_program_mutation()
         self.live.verify_build()
         warnings = self.warn_stale()
         entries = safe_entries(self.safe[plan["pin"]]["steps"]) if self.live.stub and self.live.stub.deadman else []
@@ -811,6 +828,7 @@ class Pins:
 
     def finish(self, name, plan):
         """Run a release/restore plan; the claim is dropped only if every step succeeded."""
+        self.live.refuse_program_mutation()
         self.live.verify_build()
         try:
             executed, _ = self.live.run_steps(plan["steps"])
@@ -995,6 +1013,11 @@ def execute_live(args, profile, live, pins, plan):
     if command == "pin":
         return pins.finish(args.pin, plan)
     if command == "safe":
+        if args.all and live.stub and live.read_words(live.stub.base, 32, 1)[0] == 0x32544145:
+            from .interp import Program
+
+            program = Program(live)
+            return {"program": program.mutate("stop", program.snapshot()[40]), "executed": True}
         results = pins.safe_all(plan["pins"])
         return {"results": results, "ok": all(r["ok"] for r in results),
                 "remaining_claims": list(pins.state.claims)}

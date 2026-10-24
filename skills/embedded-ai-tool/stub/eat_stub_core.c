@@ -7,6 +7,10 @@ static uint32_t last_host_hb;
 static uint32_t last_change_ms;
 static uint32_t was_armed;
 static uint32_t fired;
+#if EAT_INTERP_ENABLE
+static eat_interp *interpreter;
+void eat_stub_attach_interp(eat_interp *ctx) { interpreter=ctx; }
+#endif
 
 static void apply_safe(void)
 {
@@ -36,6 +40,9 @@ void eat_stub_init(const eat_hal *port, volatile uint32_t *mailbox, uint32_t mai
     uint32_t i;
 
     hal = port;
+#if EAT_INTERP_ENABLE
+    interpreter=0;
+#endif
     mb = mailbox;
     mb_words = mailbox_words;
     for (i = 0; i < mailbox_words; i++) {
@@ -51,6 +58,9 @@ void eat_stub_init(const eat_hal *port, volatile uint32_t *mailbox, uint32_t mai
 
 void eat_stub_poll(void)
 {
+#if EAT_INTERP_ENABLE
+    if(interpreter) { eat_interp_poll(interpreter); return; }
+#endif
     uint32_t now = hal->millis();
     uint32_t host_hb = mb[EAT_W_HOST_HB];
     uint32_t armed = mb[EAT_W_ARMED] != 0;
@@ -93,6 +103,9 @@ void eat_stub_poll(void)
 
 void eat_stub_fault(uint32_t code)
 {
+#if EAT_INTERP_ENABLE
+    if(interpreter) { eat_interp_trap(interpreter,code); return; }
+#endif
     /* A disarmed table is stale (released pins) or half rewritten by the host; never replay it. */
     if (mb[EAT_W_ARMED] != 0) {
         apply_safe();

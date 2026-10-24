@@ -34,7 +34,11 @@ extern volatile uint32_t eat_samples[EAT_SAMPLER_WORDS(EAT_SAMPLER_SLOTS)];
 #endif
 
 #ifndef EAT_MAILBOX_WORDS
+#if EAT_INTERP_ENABLE
+#define EAT_MAILBOX_WORDS EAT_INTERP_WORDS
+#else
 #define EAT_MAILBOX_WORDS 64u /* header 18 words + 11 safe-state rows */
+#endif
 #endif
 
 /* Bytes of RAM for host-loaded code (ram load/run); 0 disables. Some architectures can only run code
