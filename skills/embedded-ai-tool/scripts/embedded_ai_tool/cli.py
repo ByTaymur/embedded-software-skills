@@ -29,7 +29,7 @@ from .core import (
 from .live import Session, run_live
 
 LIVE = {"peek", "poke", "pin", "safe", "ram", "stub"}
-SERVE_ALLOWED = LIVE | {"identity", "verify", "read"}
+SERVE_ALLOWED = LIVE | {"identity", "verify", "read", "measure"}
 
 
 def emit(value, stream=None):
@@ -80,6 +80,11 @@ def parser():
     search = sub.add_parser("search")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=30)
+    measure = sub.add_parser("measure", help="Hedefte örnekle; yalnız örnekleyici RAM yapılandırmasına yazar")
+    measure.add_argument("--channel", action="append", required=True, help="adres[:8|16|32]")
+    measure.add_argument("--period-ms", type=int, required=True)
+    measure.add_argument("--duration", type=float, required=True)
+    measure.add_argument("--threshold", action="append", type=float, default=[])
     live_parser(sub)
     return p
 
@@ -238,6 +243,18 @@ def run(args):
         result = run_plan(plan, "Derleme")
         return {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
                 "note": "Yeni ELF SHA256 ve profil bilgileri ayrıca doğrulanmalı"}
+    if args.command == "measure":
+        from .live import Live
+        from .sampler import Sampler
+
+        target = session.target if session else open_target(profile)
+        try:
+            live = session.live if session else Live(profile, target)
+            live.verify_build()
+            return Sampler(live).measure(args.channel, args.period_ms, args.duration, args.threshold)
+        finally:
+            if session is None:
+                target.close()
     if args.command in LIVE:
         return run_live(args, profile)
     if args.command == "serve":

@@ -5,6 +5,9 @@
  *   for (;;) {
  *       while (uart_has_byte()) eat_link_rx(uart_read_byte());
  *       eat_stub_poll();
+ *       #if EAT_SAMPLER_SLOTS > 0
+ *       eat_sampler_tick(app_millis());       // now_ms; call here OR from a periodic timer ISR
+ *       #endif
  *       app_step();
  *   }
  *   // fault / trap handler of your architecture:  eat_stub_fault(code);
@@ -21,6 +24,14 @@
 
 #include "eat_link.h"
 #include "eat_stub_core.h"
+#include "eat_sampler.h"
+
+#ifndef EAT_SAMPLER_SLOTS
+#define EAT_SAMPLER_SLOTS 0u
+#endif
+#if EAT_SAMPLER_SLOTS > 0
+extern volatile uint32_t eat_samples[EAT_SAMPLER_WORDS(EAT_SAMPLER_SLOTS)];
+#endif
 
 #ifndef EAT_MAILBOX_WORDS
 #define EAT_MAILBOX_WORDS 64u /* header 18 words + 11 safe-state rows */

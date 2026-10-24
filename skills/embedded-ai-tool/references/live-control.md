@@ -30,6 +30,7 @@ firmware dosyaları kaydedilmez. "1 kart": 2026-10-24, STM32F732 (Cortex-M7), ST
 | Magic korumalı heartbeat (stub yokken mailbox'a yazmama) | Var | 1 kart | Gerekmez |
 | Stub çekirdeği: mailbox, dead-man, RAM çağrısı, fault | Var (C kodu host'ta, Python istemcisiyle) | **Yok**: hiçbir hedefte stub çalıştırılmadı | **Yok**: bağlantı kopunca çıkışın güvenli duruma geçtiği ölçülmedi |
 | `ram build` / `load` / `run` | Var | Yok | Yok |
+| Hedef örnekleyici, `measure`: halka, taşma, izin tablosu, hedef zamanıyla hız; prob/seri taşıma | Var | Yok | Yok |
 | Seri bağlantı (`eat_link`, `link.py`), `eat_embed` entegrasyonu | Var (gerçek C koduna karşı, simüle bellek); ARM Cortex-M0, RISC-V 32, MIPS32, 64 bit host için `-Werror -pedantic` derleme | **Yok**: gerçek UART üzerinde denenmedi | Yok |
 | MCU veri dosyaları | `references/examples/` **kurgusaldır** | Kart denemesindeki dosya o karta özeldir ve dağıtılmaz | — |
 
@@ -53,11 +54,12 @@ Kartla bağlantı `connection.transport` ile seçilir:
 
 | Alan | Anlamı |
 |---|---|
-| `live.write_ranges` | `poke` ve tariflerin yazabileceği register/RAM alanları. `mailbox` ve `scratch` okunabilir ama `write_ranges` kapsasa bile `poke`/tarifle **yazılamaz**; onlara yalnız stub protokolü ve `ram load` yazar |
+| `live.write_ranges` | `poke` ve tariflerin yazabileceği register/RAM alanları. `mailbox`, `scratch` ve `samples` okunabilir ama `write_ranges` kapsasa bile `poke`/tarifle **yazılamaz**; onlara yalnız stub/örnekleyici protokolü ve `ram load` yazar |
 | `live.protected_ranges` | Her izin listesinden güçlü; bu alanlara yazı reddedilir (flash, option bytes, debug/clock kontrolü) |
 | `live.side_effect_ranges` | Okuması durum değiştiren registerlar. `peek` reddeder; yazma körlemesine yapılır, geri okuma ve maskeli yazma yapılmaz |
 | `live.mailbox` | Stub mailbox RAM'i (hizalı, en az 88 bayt): `{"address", "size"}` veya `{"symbol": "eat_mailbox"}` (adres/boyut profildeki `artifact` ELF'inden). Tanımlıysa pin komutları çalışan stub ister |
 | `live.scratch` | RAM'e yüklenecek kod bölgesi, aynı biçimde (`{"symbol": "eat_scratch"}`); `mailbox` ile çakışamaz |
+| `live.samples` | Örnekleyici RAM'i: `{"address": "0x20001000", "size": 2796}` (kurgusal adres) veya `{"symbol": "eat_samples"}`; sembolün adres/boyutu `live.mailbox` gibi profildeki `artifact` ELF'inden çözülür. `measure` için zorunludur |
 | `live.heartbeat_timeout_ms` | Dead-man süresi, 100..60000, varsayılan 1000 |
 | `live.deadman` | Varsayılan `true`; `false` ise stub güvenli durumu otomatik uygulamaz |
 | `live.entry_or` | `ram run` giriş adresine OR'lanan mimari bitleri; varsayılan 0. Cortex-M (Thumb) için 1 |
@@ -104,6 +106,7 @@ Değiştiren komutlar `--execute` olmadan **plan** döndürür ve hiç bağlanma
 | `safe [--all] [--execute]` | Talep edilen (veya profildeki bütün korumasız) pinleri güvenli duruma al; biri başarısız olsa devam eder |
 | `ram build\|load\|run` | Bölüm "RAM parçası" |
 | `stub status` | Mailbox, heartbeat ve dead-man sayacı |
+| `measure --channel ADRES[:8\|16\|32] --period-ms N --duration SANİYE [--threshold EŞİK]` | `live.samples` üzerinden örnekle; kanal/eşik seçenekleri tekrarlanabilir. CLI süresi 0 < süre ≤ 86400 saniye |
 | `serve` | Satır tabanlı JSON oturumu |
 
 Bir pin uygulaması şu sırayla ilerler: UID/build doğrulama → politika ve sınırlar →
@@ -165,6 +168,7 @@ veya `claude mcp add embedded-ai-tool -- python <skill>/scripts/eat.py --profile
 | `pin_list` | `pin list` | Hayır |
 | `poke`, `pin_apply`, `pin_release`, `pin_restore`, `safe_state`, `ram_load`, `ram_run` | aynı adlar | Yalnız `execute: true` ile yazar; aksi hâlde plan |
 | `ram_build` | `ram build` | Hayır (ana makinede derler) |
+| `measure` | `measure` | Örnekleyici yapılandırmasını yazar; `execute` gerekmez. `duration` en fazla **60 saniye**; daha büyük değer bağlantı kurulmadan reddedilir |
 
 - Bağlantı tembeldir: istemci başlarken OpenOCD kapalı olabilir; ilk donanım çağrısında açılır,
   koparsa sonraki çağrıda yeniden açılır (flash doğrulaması yeniden yapılır). OpenOCD yoksa çağrı

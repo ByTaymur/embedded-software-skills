@@ -116,6 +116,16 @@ tool("ram_run", "Yüklenen RAM parçasını stub üzerinden çağırır (en çok
      (), executing, True)
 
 
+tool("measure", "Hedefte en fazla 60 saniye örnekler; yalnız eat_samples yapılandırmasını yazar. "
+     "Hız hedef sıra/zaman farkından ölçülür.",
+     lambda a: ["measure", *repeated("--channel", a["channels"]), "--period-ms", str(a["period_ms"]),
+                "--duration", str(a["duration"]), *repeated("--threshold", a.get("thresholds", []))],
+     {"channels": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 8},
+      "period_ms": {"type": "integer", "minimum": 1}, "duration": {"type": "number", "maximum": 60},
+      "thresholds": {"type": "array", "items": {"type": "number"}}},
+     ("channels", "period_ms", "duration"), mutating=True)
+
+
 def is_type(value, kinds):
     kinds = kinds if isinstance(kinds, list) else [kinds]
     if isinstance(value, bool):
@@ -136,6 +146,8 @@ def check(schema, arguments):
         spec = schema["properties"][key]
         if not is_type(value, spec["type"]):
             raise ValueError(f"{key} tipi {spec['type']} olmalı")
+        if "maximum" in spec and value > spec["maximum"]:
+            raise ValueError(f"{key} en fazla {spec['maximum']} olmalı")
         items = spec.get("items") or {}
         if items and not all(is_type(item, items["type"]) for item in value):
             raise ValueError(f"{key} öğeleri {items['type']} olmalı")
