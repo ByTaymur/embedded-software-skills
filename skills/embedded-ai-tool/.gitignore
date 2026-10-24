@@ -9,3 +9,4 @@ dist/
 sessions/
 projects/
 .env
+*.local.json

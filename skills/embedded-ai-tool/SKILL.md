@@ -74,19 +74,46 @@ working directory; set `--session-dir` to the project's required evidence direct
 - Flash uses a file visible to both tool and OpenOCD. Remote file transfer is not
   implemented. Socket close never resets/resumes the CPU or shuts down the server.
 
+## Live RAM-only control (stub mode)
+
+When the user wants the AI to drive pins and peripherals directly from RAM, with no
+firmware flashed per task, read [references/live-control.md](references/live-control.md)
+first (and [references/stub-protocol.md](references/stub-protocol.md) when touching the
+mailbox). Commands: `peek`, `poke`, `pin list|apply|release|restore`, `safe`,
+`ram build|load|run`, `stub status`, `serve`, `mcp`. Mutations are plans until `--execute`.
+Profiles choose `connection.transport`: `openocd` (debug probe) or `serial` (the stub's UART/USB link,
+for probe-less targets or families OpenOCD does not cover). If the `embedded-ai-tool` MCP server is connected, prefer its tools (`peek`, `pin_apply`, …):
+they are the same commands over one held session; mutating tools need `execute: true`.
+
+- Never invent MCU facts. Pin/function/register recipes come from a reviewed MCU data
+  file (`live.mcu_db`); the files under `references/examples/` are fictional.
+- Only profile pins, functions and ranges are allowed. Never lift a `protected` pin or
+  range, and never reconfigure debug pins. Do not widen `write_ranges` to make a command pass.
+- After `pin apply`, measure the physical result (readback is only a register check). If a
+  step is `partial` or `unknown_if_sent`, do not retry; measure, then choose `pin release`,
+  `pin restore` or `safe`. Use `safe --all --execute` as the emergency stop.
+- With a stub configured, outputs revert after `heartbeat_timeout_ms` unless `serve` or
+  `mcp` is running. Tell the user this when a one-shot command is expected to persist.
+- The stub core is MCU-independent and host-tested only. A port for the user's MCU and
+  measurement on a real board are required before claiming it works on hardware.
+
 For source changes, follow the target project's editing discipline. If installed,
 `stm32-firmware-workflow` and `firmware-source-editor` complement this tool;
 neither is required to run this self-contained skill on other supported targets.
-The CLI supplies no independent LLM/web server and no universal motor-control routines.
+The CLI supplies no LLM/web server and no universal motor-control routines; `mcp` is a
+stdio MCP server that the AI client itself starts.
 
 This release is alpha. ST-Link is supported through OpenOCD; direct ST-Link USB
 and ST-LINK GDB server backends are not implemented. See the support matrix in
-[README.md](README.md) before making compatibility claims. Physical board/probe
-qualification is still pending.
+[README.md](README.md) and the evidence table in
+[references/live-control.md](references/live-control.md) (host test / board run / physical
+measurement) before making compatibility claims; only the last two columns support one.
 
 ## Tool maintenance
 
-Runtime: `scripts/embedded_ai_tool/`; launcher: `scripts/eat.py`; tests: `tests/`.
+Runtime: `scripts/embedded_ai_tool/` (`live.py` is the live-control module); launcher:
+`scripts/eat.py`; stub core: `stub/`; tests: `tests/` (`test_stub.py` compiles the stub
+with `gcc`/`cc` and is skipped without a C compiler).
 From the skill directory run `python -m unittest discover -s tests -v` and
 `python -m ruff check scripts tests`. Tests load the bundled package, not a globally
 installed copy. Report skipped optional OpenOCD tests. Host tests do not count as

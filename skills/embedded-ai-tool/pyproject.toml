@@ -19,7 +19,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.9,<1", "build>=1,<2"]
+serial = ["pyserial>=3.5,<4"]
+dev = ["ruff>=0.9,<1", "build>=1,<2", "ziglang>=0.13,<1"]
 
 [project.urls]
 Repository = "https://github.com/ByTaymur/embedded-software-skills"
@@ -40,3 +41,4 @@ allowed-confusables = ["ı"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/test_tool.py" = ["E402"]
+"tests/test_live.py" = ["E402"]

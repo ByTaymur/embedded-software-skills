@@ -1,23 +1,39 @@
 """JSON CLI; planning is offline and mutations require explicit --execute."""
 import argparse
+import contextlib
+import io
 import json
+import queue
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .core import RPC, Device, Image, Profile, digest, tcl_string
+from .core import (
+    RPC,
+    Device,
+    Image,
+    Profile,
+    argv_plan,
+    digest,
+    open_target,
+    openocd_only,
+    run_plan,
+    tcl_string,
+    utcnow,
+)
+from .live import Session, run_live
+
+LIVE = {"peek", "poke", "pin", "safe", "ram", "stub"}
+SERVE_ALLOWED = LIVE | {"identity", "verify", "read"}
 
 
-def emit(value):
-    print(json.dumps(value, ensure_ascii=True, allow_nan=False), flush=True)
-
-
-def utcnow():
-    return datetime.now(UTC).isoformat()
+def emit(value, stream=None):
+    print(json.dumps(value, ensure_ascii=True, allow_nan=False), file=stream or sys.stdout, flush=True)
 
 
 def audit(folder, entry):
@@ -64,7 +80,55 @@ def parser():
     search = sub.add_parser("search")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=30)
+    live_parser(sub)
     return p
+
+
+def live_parser(sub):
+    """RAM-only live control commands; mutations stay plans until --execute."""
+    peek = sub.add_parser("peek", help="İzinli adresten bellek/register oku")
+    peek.add_argument("address")
+    peek.add_argument("--count", type=int, default=1)
+    peek.add_argument("--width", type=int, choices=(8, 16, 32), default=32)
+    poke = sub.add_parser("poke", help="write_ranges içinde bellek/register yaz ve geri oku")
+    poke.add_argument("address")
+    poke.add_argument("value")
+    poke.add_argument("--width", type=int, choices=(8, 16, 32), default=32)
+    poke.add_argument("--mask", help="Yalnız bu bitleri değiştir (oku-değiştir-yaz)")
+    poke.add_argument("--no-verify", action="store_true", help="Yazma-only/W1C register: geri okuma yapma")
+    poke.add_argument("--execute", action="store_true")
+    pin = sub.add_parser("pin", help="Profildeki pinlerin işlevini tarifle değiştir")
+    actions = pin.add_subparsers(dest="action", required=True)
+    actions.add_parser("list")
+    apply = actions.add_parser("apply")
+    apply.add_argument("pin")
+    apply.add_argument("function")
+    apply.add_argument("--param", action="append", default=[], metavar="ad=değer")
+    apply.add_argument("--execute", action="store_true")
+    for name in ("release", "restore"):
+        child = actions.add_parser(name)
+        child.add_argument("pin")
+        child.add_argument("--execute", action="store_true")
+    safe = sub.add_parser("safe", help="Talep edilen (veya --all) pinleri güvenli duruma al")
+    safe.add_argument("--all", action="store_true")
+    safe.add_argument("--execute", action="store_true")
+    ram = sub.add_parser("ram", help="Flash'a yazmadan RAM'e küçük parça derle/yükle/çalıştır")
+    actions = ram.add_subparsers(dest="action", required=True)
+    build = actions.add_parser("build")
+    build.add_argument("--execute", action="store_true")
+    load = actions.add_parser("load")
+    load.add_argument("--file")
+    load.add_argument("--address")
+    load.add_argument("--execute", action="store_true")
+    run_ram = actions.add_parser("run")
+    run_ram.add_argument("--entry")
+    run_ram.add_argument("--arg", action="append", default=[])
+    run_ram.add_argument("--timeout", type=float, default=10)
+    run_ram.add_argument("--execute", action="store_true")
+    stub = sub.add_parser("stub", help="Hedefteki stub mailbox durumu")
+    stub.add_subparsers(dest="action", required=True).add_parser("status")
+    sub.add_parser("serve", help="JSON satırı oturumu: açık RPC, stub heartbeat, dead-man beslemesi")
+    sub.add_parser("mcp", help="MCP (stdio) sunucusu: yapay zekâ araçları -> OpenOCD -> hedef RAM")
 
 
 def init_project(directory, name):
@@ -102,9 +166,7 @@ def command_plan(profile, command):
         if type(port) is not int or not 1 <= port <= 65535:
             raise ValueError("Geçersiz Tcl portu")
         argv += ["-c", f"tcl_port {port}"]
-    if not isinstance(argv, list) or not argv or any(not isinstance(x, str) or not x for x in argv):
-        raise ValueError("Komut, boş olmayan argv metin listesi olmalı")
-    return {"argv": argv, "cwd": str(profile.root), "timeout_s": config.get("timeout_s", 120)}
+    return argv_plan(argv, profile.root, config.get("timeout_s", 120))
 
 
 def search_sources(profile, query, limit):
@@ -132,7 +194,7 @@ def search_sources(profile, query, limit):
 def run(args):
     if args.command == "doctor":
         return {"python": sys.version, "openocd": shutil.which("openocd"),
-                "transport": "OpenOCD Tcl RPC (default 6666); ST-Link is the probe, not the server",
+                "transport": "openocd: OpenOCD Tcl RPC (default 6666), the debug probe is OpenOCD's adapter; serial: stub link over UART/USB (pyserial)",
                 "hardware_tested": False}
     if args.command == "init":
         return init_project(args.directory, args.name)
@@ -155,7 +217,8 @@ def run(args):
                             for s in image.symbols() if args.filter in s.name]}
     if args.profile is None:
         raise ValueError("Bu komut için --profile gerekli")
-    profile = Profile(args.profile, require_target=args.command not in {"build", "search", "openocd"})
+    session = getattr(args, "_session", None)
+    profile = session.profile if session else Profile(args.profile, require_target=args.command not in {"build", "search", "openocd"})
     args.profile_context = {"name": profile.name, "profile_sha256": profile.sha,
                             "expected_identity": profile.data.get("identity"),
                             "connection": profile.data.get("connection"),
@@ -172,13 +235,20 @@ def run(args):
             if completed.returncode:
                 raise ValueError(f"OpenOCD başarısız ({completed.returncode})")
             return {"returncode": completed.returncode}
-        result = subprocess.run(plan["argv"], cwd=plan["cwd"], timeout=plan["timeout_s"],
-                                capture_output=True, text=True, errors="replace", check=False)
-        if result.returncode:
-            raise ValueError(f"Derleme başarısız ({result.returncode}): {result.stdout}\n{result.stderr}")
+        result = run_plan(plan, "Derleme")
         return {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
                 "note": "Yeni ELF SHA256 ve profil bilgileri ayrıca doğrulanmalı"}
-    device = Device(profile, None)
+    if args.command in LIVE:
+        return run_live(args, profile)
+    if args.command == "serve":
+        return serve(args, profile)
+    if args.command == "mcp":
+        from .mcp_server import serve_mcp  # imports this module; load only when needed
+
+        return serve_mcp(args, profile)
+    device = session.live.device if session else Device(profile, None)
+    # Inside serve, long flash reads must keep feeding the stub dead-man.
+    tick = (lambda: session.live.keepalive(throttle=True)) if session else None
     plan = None
     if args.command == "write":
         plan = device.write_plan(args.name, args.value)
@@ -195,16 +265,16 @@ def run(args):
         return {"plan": plan, "executed": False}
     if args.command == "watch" and (not 0.01 <= args.interval <= 60 or not 0 < args.duration <= 86400):
         raise ValueError("interval 0.01..60; duration 0..86400 gerekli")
-    rpc = RPC(profile.connection)
-    device.rpc = rpc
+    target = session.target if session else open_target(profile)
+    device.target = target
     try:
         if args.command == "identity":
             actual = device.read(profile.uid_address, profile.uid_size)
             return {"uid_hex": actual.hex(), "matches": actual == profile.expected, "profile": profile.name}
         if args.command == "verify":
-            return device.verify()
+            return device.verify(tick)
         if args.command == "read":
-            verification = device.verify() if any("symbol" in profile.variables[name] for name in args.names) else None
+            verification = device.verify(tick) if any("symbol" in profile.variables[name] for name in args.names) else None
             start = utcnow()
             values = device.snapshot(args.names)
             return {"started_at": start, "ended_at": utcnow(), "values": values,
@@ -228,7 +298,7 @@ def run(args):
             return device.write(plan)
         if args.command == "control":
             action = {"halt": "halt", "resume": "resume", "reset-run": "reset run", "reset-halt": "reset halt"}[args.action]
-            return {"command_response": rpc.call(device.guard() + action), "action": args.action}
+            return {"command_response": openocd_only(target, "control").script(action), "action": args.action}
         if args.command == "flash":
             # OpenOCD reads a file by path. Freeze the already hashed bytes so a
             # concurrent rebuild cannot replace the file between validation and flash.
@@ -236,19 +306,104 @@ def run(args):
             with staged.open("xb") as stream:
                 stream.write(profile.artifact().raw)
             path = tcl_string(staged.resolve().as_posix())
-            response = rpc.call(device.guard() + f"halt; flash write_image erase {path}; verify_image {path}; reset run")
+            response = openocd_only(target, "flash").script(f"halt; flash write_image erase {path}; verify_image {path}; reset run")
             return {"plan": plan, "staged_image": str(staged), "response": response, "verified": True}
     finally:
-        rpc.close()
+        if session is None:
+            target.close()
     raise ValueError("Bilinmeyen komut")
 
 
-def main():
-    args = parser().parse_args()
+def serve(args, profile):
+    """Line-delimited JSON requests ({"argv": [...]}) over one connection; feeds the stub dead-man heartbeat."""
+    target = open_target(profile)
+    try:
+        session = Session(profile, target)
+        stub = session.live.stub
+        present = stub is not None and stub.status()["magic_ok"]
+    except BaseException:
+        target.close()
+        raise
+    # Never heartbeat into a mailbox the stub has not claimed: that RAM may be application data.
+    period = stub.timeout_ms / 3000 if present and stub.deadman else None
+    lines = queue.Queue()
+
+    def pump():
+        for line in sys.stdin:
+            lines.put(line)
+        lines.put(None)
+
+    def beat():
+        if period is None or target.closed:
+            return
+        try:
+            if not stub.heartbeat():
+                emit({"event": "stub_missing", "error": "Mailbox magic yok; heartbeat yazılmadı"})
+        except (ValueError, OSError) as exc:
+            emit({"event": "heartbeat_failed", "error": str(exc)})
+
+    threading.Thread(target=pump, daemon=True).start()
+    emit({"event": "ready", "stub": present, "heartbeat_period_s": period})
+    handled, reason = 0, "stdin kapandı"
+    try:
+        while True:
+            try:
+                line = lines.get(timeout=period)
+            except queue.Empty:
+                beat()
+                continue
+            if line is None:
+                break
+            if line.strip():
+                response = serve_request(line, args, session)
+                emit(response)
+                handled += 1
+                if response.get("error_type") == "KeyboardInterrupt":
+                    reason = "Ctrl+C"
+                    break
+                beat()
+            if target.closed:
+                reason = "Hedef bağlantısı hata sonrası kapatıldı"
+                break
+    except KeyboardInterrupt:
+        reason = "Ctrl+C"
+    finally:
+        target.close()
+    return {"requests": handled, "stopped_by": reason,
+            "note": "Heartbeat durdu; stub dead-man süresi sonunda pinleri güvenli duruma alır"}
+
+
+def serve_request(line, base, session):
+    try:
+        argv = json.loads(line)["argv"]
+    except (ValueError, KeyError, TypeError) as exc:
+        return {"ok": False, "error": f"Geçersiz istek: {exc}", "output": ""}
+    return dispatch(argv, base, session)
+
+
+def dispatch(argv, base, session):
+    """Run one session request through the CLI parser, policy and audit (shared by serve and mcp)."""
+    captured = io.StringIO()
+    try:
+        if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
+            raise ValueError('{"argv": ["komut", ...]} gerekli')
+        if argv[0] not in SERVE_ALLOWED:
+            raise ValueError(f"serve içinde desteklenmeyen komut: {argv[0]}")
+        # argparse prints help/usage itself; keep stdout a pure JSON-lines stream.
+        with contextlib.redirect_stdout(captured), contextlib.redirect_stderr(captured):
+            args = parser().parse_args(["--profile", str(base.profile), "--session-dir", str(base.session_dir), *argv])
+    except (ValueError, KeyError, TypeError, SystemExit) as exc:
+        return {"ok": False, "error": f"Geçersiz istek: {exc}", "output": captured.getvalue()}
     args.session_dir = args.session_dir.resolve()
+    args._session = session
+    return execute(args)[0]
+
+
+def execute(args):
     entry = {"started_at": utcnow(), "command": args.command,
              "profile": str(args.profile.resolve()) if args.profile else None,
-             "arguments": {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}}
+             "arguments": {key: str(value) if isinstance(value, Path) else value
+                           for key, value in vars(args).items() if not key.startswith("_")}}
     # Persist intent before any connection or mutation, including interrupted/ambiguous writes.
     intent = audit(args.session_dir, {**entry, "status": "started"})
     try:
@@ -261,7 +416,15 @@ def main():
         code = 1
     entry.update(ended_at=utcnow(), intent=intent, profile_context=getattr(args, "profile_context", None))
     record = audit(args.session_dir, entry)
-    emit({**entry, "record": record})
+    return {**entry, "record": record}, code
+
+
+def main():
+    args = parser().parse_args()
+    args.session_dir = args.session_dir.resolve()
+    result, code = execute(args)
+    # Under mcp, stdout carries only JSON-RPC; the session summary goes to stderr.
+    emit(result, sys.stderr if args.command == "mcp" else None)
     return code
 
 

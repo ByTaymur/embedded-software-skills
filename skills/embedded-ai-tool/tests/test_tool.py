@@ -12,7 +12,15 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from embedded_ai_tool.cli import init_project, parser, run
-from embedded_ai_tool.core import RPC, Device, Profile, rpc_script, tcl_string
+from embedded_ai_tool.core import (
+    RPC,
+    Device,
+    OpenOcdTarget,
+    Profile,
+    identity_guard,
+    rpc_script,
+    tcl_string,
+)
 
 
 class ToolTests(unittest.TestCase):
@@ -59,7 +67,7 @@ class ToolTests(unittest.TestCase):
     def test_read_decodes_and_checks_identity_in_same_call(self):
         rpc = Mock()
         rpc.call.return_value = "0x2a"
-        self.assertEqual(Device(self.profile(), rpc).snapshot(["counter"]), {"counter": 42})
+        self.assertEqual(Device(self.profile(), OpenOcdTarget(self.profile(), rpc)).snapshot(["counter"]), {"counter": 42})
         script = rpc.call.call_args.args[0]
         self.assertLess(script.index("IDENTITY_MISMATCH"), script.index("read_memory 8192"))
         self.assertIn("foreach", script)
@@ -69,7 +77,7 @@ class ToolTests(unittest.TestCase):
         rpc = Mock()
         rpc.call.return_value = ""
         with self.assertRaises(ValueError):
-            Device(self.profile(), rpc).snapshot(["counter"])
+            Device(self.profile(), OpenOcdTarget(self.profile(), rpc)).snapshot(["counter"])
 
     def test_flash_verify_checks_every_byte(self):
         p = self.profile()
@@ -87,7 +95,7 @@ class ToolTests(unittest.TestCase):
 
     def test_failed_build_verification_prevents_write(self):
         rpc = Mock()
-        d = Device(self.profile(), rpc)
+        d = Device(self.profile(), OpenOcdTarget(self.profile(), rpc))
         plan = d.write_plan("counter", "1")
         d.verify = Mock(side_effect=ValueError("mismatch"))
         with self.assertRaises(ValueError):
@@ -97,7 +105,7 @@ class ToolTests(unittest.TestCase):
     def test_mutation_timeout_never_retried(self):
         rpc = Mock()
         rpc.call.side_effect = TimeoutError("uncertain")
-        d = Device(self.profile(), rpc)
+        d = Device(self.profile(), OpenOcdTarget(self.profile(), rpc))
         d.verify = Mock(return_value={})
         with self.assertRaises(TimeoutError):
             d.write(d.write_plan("counter", "1"))
@@ -131,7 +139,7 @@ class ToolTests(unittest.TestCase):
         rpc = Mock()
         rpc.call.return_value = "0x7fc00000"
         with self.assertRaisesRegex(ValueError, "raw_hex=0000c07f"):
-            Device(self.profile(), rpc).snapshot(["counter"])
+            Device(self.profile(), OpenOcdTarget(self.profile(), rpc)).snapshot(["counter"])
 
     def test_openocd_failure_is_not_success_and_port_is_used(self):
         self.data["openocd"] = {"config_files": ["board.cfg"]}
@@ -148,7 +156,7 @@ class ToolTests(unittest.TestCase):
         self.data["variables"]["counter"] = {"symbol": "counter", "type": "u32"}
         self.profile()
         args = parser().parse_args(["--profile", str(self.path), "read", "counter"])
-        with patch("embedded_ai_tool.cli.RPC"), patch("embedded_ai_tool.cli.Device") as device:
+        with patch("embedded_ai_tool.core.RPC"), patch("embedded_ai_tool.cli.Device") as device:
             device.return_value.verify.side_effect = ValueError("build mismatch")
             with self.assertRaisesRegex(ValueError, "build mismatch"):
                 run(args)
@@ -162,7 +170,7 @@ class ToolTests(unittest.TestCase):
         original = self.root / "original.elf"
         original.write_bytes(b"changed-after-approval")
         image = Mock(path=original, sha="pinned", raw=b"verified-build")
-        with patch("embedded_ai_tool.cli.Profile.artifact", return_value=image), patch("embedded_ai_tool.cli.RPC") as rpc:
+        with patch("embedded_ai_tool.cli.Profile.artifact", return_value=image), patch("embedded_ai_tool.core.RPC") as rpc:
             rpc.return_value.call.return_value = ""
             result = run(args)
         self.assertEqual(Path(result["staged_image"]).read_bytes(), b"verified-build")
@@ -180,7 +188,7 @@ class ToolTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("openocd"), "OpenOCD bulunamadı; offline Jim testi atlandı")
     def test_real_openocd_interpreter_without_hardware(self):
-        guard = Device(self.profile(), None).guard()
+        guard = identity_guard(self.profile())
         script = ('proc read_memory {addr width count} {return {0x01 0x02 0x03 0x04}}; ' + guard +
                   'echo UID_GUARD_OK; echo ' + tcl_string('test/$x/[exit];file.elf') +
                   '; proc read_memory {addr width count} {return {9 9 9 9}}; '

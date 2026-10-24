@@ -30,3 +30,12 @@ donanımın güvenli çalıştığını kanıtlamaz. Uygulama kabul ölçütleri
 Host birim testleri, sahte TCP sunucusu ve adaptör açılmadan çalıştırılan Tcl testleri
 kart testi sayılmaz. Gerçek probe, MCU bağlantısı, firmware derlemesi, flash ve fiziksel
 davranış ayrı kanıtlanır. Test/derleme yapılmadıysa yapılmış gibi raporlanmaz.
+
+Uygulama firmware'i çalışırken pin talebi o pinin sahibi olmak demek değildir: register geri
+okuması doğru olsa da firmware pini sonradan yeniden yazabilir. `pin apply` sonrası pini bir süre
+örnekle; değer geri dönüyorsa pin uygulamaya aittir: o pine dokunma veya stub'a geçince yönet.
+
+Çıkış seviyesi için hedefte atomik set/clear register'ı varsa MCU veri dosyasındaki tarif onu
+`verify: false` kör yazmayla kullanmalıdır; oku-değiştir-yaz, firmware'in aynı porttaki diğer
+çıkışlara yaptığı yazmayı ezebilir. Kör yazma geri alma kaydı tutmaz: `pin restore` yalnız
+okunarak değiştirilen bitleri geri yazar. Önceki seviyeye dönmek için `pin release` kullan.

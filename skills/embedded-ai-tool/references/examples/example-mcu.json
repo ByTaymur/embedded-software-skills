@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "name": "EXAMPLE-MCU (FICTIONAL - addresses and bits are invented for documentation and tests; never use on hardware)",
+  "pins": {
+    "P0.5": {"functions": {
+      "gpio_in":   {"recipe": "gpio_in",   "params": {"gpio_base": "0x50000000", "pin": 5, "gpio_clk": 0}},
+      "gpio_out":  {"recipe": "gpio_out",  "params": {"gpio_base": "0x50000000", "pin": 5, "gpio_clk": 0}},
+      "gpio_read": {"recipe": "gpio_read", "params": {"gpio_base": "0x50000000", "pin": 5}},
+      "pwm":       {"recipe": "pwm",       "params": {"gpio_base": "0x50000000", "pin": 5, "gpio_clk": 0,
+                                                       "af": 3, "timer_base": "0x50010000", "timer_clk": 1},
+                    "resources": ["TIM0_CH1"]}
+    }},
+    "P0.7": {"functions": {
+      "gpio_in":  {"recipe": "gpio_in",  "params": {"gpio_base": "0x50000000", "pin": 7, "gpio_clk": 0}},
+      "uart_tx":  {"recipe": "uart_tx",  "params": {"gpio_base": "0x50000000", "pin": 7, "gpio_clk": 0,
+                                                     "af": 5, "uart_base": "0x50030000", "uart_clk": 2},
+                   "resources": ["UART0"]}
+    }},
+    "P0.13": {"functions": {
+      "gpio_in": {"recipe": "gpio_in", "params": {"gpio_base": "0x50000000", "pin": 13, "gpio_clk": 0}}
+    }}
+  },
+  "recipes": {
+    "gpio_in": {
+      "steps": [
+        {"op": "modify", "address": "0x50020000", "mask": "1 << gpio_clk", "value": "1 << gpio_clk"},
+        {"op": "modify", "address": "gpio_base + 0x00", "mask": "3 << (pin * 2)", "value": 0}
+      ]
+    },
+    "gpio_out": {
+      "inputs": {"level": {"default": 0, "min": 0, "max": 1}},
+      "steps": [
+        {"op": "modify", "address": "0x50020000", "mask": "1 << gpio_clk", "value": "1 << gpio_clk"},
+        {"op": "modify", "address": "gpio_base + 0x04", "mask": "1 << pin", "value": "level << pin"},
+        {"op": "modify", "address": "gpio_base + 0x00", "mask": "3 << (pin * 2)", "value": "1 << (pin * 2)"}
+      ]
+    },
+    "gpio_read": {
+      "steps": [
+        {"op": "read", "address": "gpio_base + 0x08", "mask": "1 << pin", "shift": 0, "name": "raw_pin_bit"}
+      ]
+    },
+    "pwm": {
+      "inputs": {"freq": {"min": 250, "max": 100000, "required": true},
+                 "duty_permille": {"default": 0, "min": 0, "max": 1000}},
+      "derive": {"arr": "16000000 // freq - 1", "ccr": "(arr + 1) * duty_permille // 1000"},
+      "steps": [
+        {"op": "modify", "address": "0x50020000", "mask": "(1 << gpio_clk) | (1 << timer_clk)",
+         "value": "(1 << gpio_clk) | (1 << timer_clk)"},
+        {"op": "write", "address": "timer_base + 0x04", "value": 0},
+        {"op": "write", "address": "timer_base + 0x08", "value": "arr"},
+        {"op": "write", "address": "timer_base + 0x0C", "value": "ccr"},
+        {"op": "modify", "address": "timer_base + 0x00", "mask": 1, "value": 1},
+        {"op": "modify", "address": "gpio_base + 0x0C", "mask": "0xF << (pin * 4)", "value": "af << (pin * 4)"},
+        {"op": "modify", "address": "gpio_base + 0x00", "mask": "3 << (pin * 2)", "value": "2 << (pin * 2)"}
+      ]
+    },
+    "uart_tx": {
+      "inputs": {"baud": {"default": 115200, "min": 1200, "max": 1000000}},
+      "derive": {"brr": "16000000 // baud"},
+      "steps": [
+        {"op": "modify", "address": "0x50020000", "mask": "(1 << gpio_clk) | (1 << uart_clk)",
+         "value": "(1 << gpio_clk) | (1 << uart_clk)"},
+        {"op": "write", "address": "uart_base + 0x00", "value": "brr"},
+        {"op": "modify", "address": "uart_base + 0x04", "mask": 1, "value": 1},
+        {"op": "modify", "address": "gpio_base + 0x0C", "mask": "0xF << (pin * 4)", "value": "af << (pin * 4)"},
+        {"op": "modify", "address": "gpio_base + 0x00", "mask": "3 << (pin * 2)", "value": "2 << (pin * 2)"}
+      ]
+    }
+  }
+}

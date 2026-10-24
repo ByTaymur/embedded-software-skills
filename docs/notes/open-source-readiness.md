@@ -2,6 +2,9 @@
 
 Tarih: 2026-10-20
 
+> Bu not o tarihteki durumu anlatır. Güncel kanıt düzeyleri:
+> [live-control.md kanıt tablosu](../../skills/embedded-ai-tool/references/live-control.md#durum-kanıt-tablosu).
+
 ## Sonuç
 
 `skills/embedded-ai-tool`, açıkça belirtilen sınırlarıyla **alpha sürüm olarak

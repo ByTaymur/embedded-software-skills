@@ -5,6 +5,8 @@ import json
 import math
 import socket
 import struct
+import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
@@ -34,6 +36,35 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def utcnow():
+    return datetime.now(UTC).isoformat()
+
+
+def spans(items):
+    result = []
+    for item in items:
+        start, size = number(item["address"]), number(item["size"])
+        if start < 0 or size <= 0 or start + size > 2**64:
+            raise ValueError("Geçersiz bellek aralığı")
+        result.append((start, start + size))
+    return result
+
+
+def argv_plan(argv, root, timeout_s):
+    if not isinstance(argv, list) or not argv or any(not isinstance(x, str) or not x for x in argv):
+        raise ValueError("Komut, boş olmayan argv metin listesi olmalı")
+    return {"argv": argv, "cwd": str(root), "timeout_s": timeout_s}
+
+
+def run_plan(plan, label):
+    """Run an argv plan without a shell; a non-zero exit is an error carrying the tool output."""
+    result = subprocess.run(plan["argv"], cwd=plan["cwd"], timeout=plan["timeout_s"],
+                            capture_output=True, text=True, errors="replace", check=False)
+    if result.returncode:
+        raise ValueError(f"{label} başarısız ({result.returncode}): {result.stdout}\n{result.stderr}")
+    return result
+
+
 def tcl_string(value):
     # Jim Tcl in OpenOCD may have no 'binary' command. Quote substitution characters.
     escapes = {"\\": "\\\\", '"': '\\"', "$": "\\$", "[": "\\[", "]": "\\]"}
@@ -56,17 +87,28 @@ class Profile:
         raw = self.path.read_bytes()
         self.sha = digest(raw)
         self.data = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=unique)
-        if self.data.get("schema_version") != 1:
-            raise ValueError("schema_version 1 gerekli")
+        version = self.data.get("schema_version")
+        if version not in (1, 2):
+            raise ValueError("schema_version 1 veya 2 gerekli")
+        if version == 1 and ("live" in self.data or "pins" in self.data):
+            raise ValueError("live/pins alanları için schema_version 2 gerekli")
         self.root = (self.path.parent / self.data.get("project_root", ".")).resolve()
         self.name = self.data["name"]
         self.image = None
         if not require_target:
             return  # Build/search/server startup do not require a connected board's UID.
         self.connection = self.data["connection"]
+        self.transport = self.connection.get("transport", "openocd")
         port = self.connection.get("port", 6666)
-        if type(port) is not int or not 1 <= port <= 65535:
-            raise ValueError("Geçersiz Tcl portu")
+        if self.transport == "openocd":
+            if type(port) is not int or not 1 <= port <= 65535:
+                raise ValueError("Geçersiz Tcl portu")
+        elif self.transport == "serial":
+            baud = self.connection.get("baud", 115200)
+            if not isinstance(port, str) or not port or type(baud) is not int or not 1200 <= baud <= 20_000_000:
+                raise ValueError("serial bağlantı için port adı (COM5, /dev/ttyACM0) ve baud gerekli")
+        else:
+            raise ValueError("connection.transport openocd veya serial olmalı")
         timeout = self.connection.get("timeout_s", 10)
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 300:
             raise ValueError("timeout_s 0..300 aralığında olmalı")
@@ -79,10 +121,7 @@ class Profile:
         self.expected = expected
         self.variables = self.data.get("variables", {})
         self.ranges = self.data.get("read_ranges", [])
-        for region in self.ranges + self.data.get("flash_ranges", []):
-            start, size = number(region["address"]), number(region["size"])
-            if start < 0 or size <= 0 or start + size > 2**64:
-                raise ValueError("Geçersiz bellek aralığı")
+        spans(self.ranges + self.data.get("flash_ranges", []))
         self.check_read(self.uid_address, self.uid_size)
         for spec in self.variables.values():
             if spec["type"] not in TYPES or type(spec.get("writable", False)) is not bool:
@@ -136,10 +175,17 @@ class Image:
                 s["st_shndx"] != "SHN_UNDEF" and s.name]
 
     def symbol(self, name, size):
-        matches = [s for s in self.symbols() if s.name == name]
-        if len(matches) != 1 or matches[0]["st_size"] != size:
+        address, actual = self.object(name)
+        if actual != size:
             raise ValueError(f"Sembol tekil değil veya tip boyutu farklı: {name}")
-        return matches[0]["st_value"]
+        return address
+
+    def object(self, name):
+        """(address, size) of one data object, e.g. the stub's `eat_mailbox` array."""
+        matches = [s for s in self.symbols() if s.name == name]
+        if len(matches) != 1 or not matches[0]["st_size"]:
+            raise ValueError(f"Sembol tekil değil veya boyutsuz: {name}")
+        return matches[0]["st_value"], matches[0]["st_size"]
 
     def regions(self, ranges):
         result = []
@@ -163,18 +209,31 @@ class RPC:
         self.sock.settimeout(connection.get("timeout_s", 10))
         self.buffer = b""
 
+    @property
+    def closed(self):
+        return self.sock is None
+
     def close(self):
-        self.sock.close()  # Never shutdown OpenOCD or resume/reset the CPU.
+        if self.sock is not None:
+            self.sock.close()  # Never shutdown OpenOCD or resume/reset the CPU.
+            self.sock = None
 
     def call(self, script):
-        self.sock.sendall(rpc_script(script).encode("utf-8") + b"\x1a")
-        while b"\x1a" not in self.buffer:
-            chunk = self.sock.recv(65536)
-            if not chunk:
-                raise ConnectionError("OpenOCD bağlantısı kapandı; yazma sonucu belirsiz olabilir")
-            self.buffer += chunk
-            if len(self.buffer) > 4 * 1024 * 1024:
-                raise ValueError("OpenOCD yanıtı çok büyük")
+        if self.sock is None:
+            raise ConnectionError("OpenOCD bağlantısı önceki bir hatadan sonra kapatıldı; yeni bağlantı açın")
+        try:
+            self.sock.sendall(rpc_script(script).encode("utf-8") + b"\x1a")
+            while b"\x1a" not in self.buffer:
+                chunk = self.sock.recv(65536)
+                if not chunk:
+                    raise ConnectionError("OpenOCD bağlantısı kapandı; yazma sonucu belirsiz olabilir")
+                self.buffer += chunk
+                if len(self.buffer) > 4 * 1024 * 1024:
+                    raise ValueError("OpenOCD yanıtı çok büyük")
+        except BaseException:
+            # A late reply would be read as the next request's answer; drop the stream instead.
+            self.close()
+            raise
         frame, self.buffer = self.buffer.split(b"\x1a", 1)
         response = frame.decode("utf-8")
         if not response.startswith("OK\n"):
@@ -182,26 +241,87 @@ class RPC:
         return response[3:]
 
 
-class Device:
-    def __init__(self, profile, rpc):
-        self.profile, self.rpc = profile, rpc
+def identity_guard(profile):
+    """Tcl prefix that aborts the whole request unless the attached board's UID matches the profile."""
+    expected = " ".join(str(x) for x in profile.expected)
+    return (f"set __eat_uid [read_memory {profile.uid_address} 8 {profile.uid_size}]; "
+            f"if {{[llength $__eat_uid] != {profile.uid_size}}} {{error IDENTITY_MISMATCH}}; "
+            f"foreach __eat_actual $__eat_uid __eat_expected {{{expected}}} "
+            '{if {$__eat_actual != $__eat_expected} {error IDENTITY_MISMATCH}}; ')
 
-    def guard(self):
-        p = self.profile
-        expected = " ".join(str(x) for x in p.expected)
-        return (f"set __eat_uid [read_memory {p.uid_address} 8 {p.uid_size}]; "
-                f"if {{[llength $__eat_uid] != {p.uid_size}}} {{error IDENTITY_MISMATCH}}; "
-                f"foreach __eat_actual $__eat_uid __eat_expected {{{expected}}} "
-                '{if {$__eat_actual != $__eat_expected} {error IDENTITY_MISMATCH}}; ')
+
+class OpenOcdTarget:
+    """Target memory through OpenOCD Tcl RPC. Every request re-checks the board identity in the same
+    Tcl evaluation, so a swapped board never receives a write. Other transports offer the same methods."""
+
+    kind = "openocd"
+
+    def __init__(self, profile, rpc):
+        self.rpc, self.guard = rpc, identity_guard(profile)
+
+    @property
+    def closed(self):
+        return self.rpc.closed
+
+    def close(self):
+        self.rpc.close()
+
+    def script(self, body):
+        return self.rpc.call(self.guard + body)
+
+    def read(self, address, width, count):
+        values = self.script(f"read_memory {address} {width} {count}").split()
+        if len(values) != count:
+            raise ValueError("Eksik bellek okuması")
+        return [int(v, 0) for v in values]
+
+    def write(self, address, width, values):
+        self.script(f"write_memory {address} {width} {{{' '.join(map(str, values))}}}")
+
+    def modify(self, address, width, mask, value):
+        """reg = (reg & ~mask) | value in one request; returns the register value before the write."""
+        full = (1 << width) - 1
+        script = (f"set __v [lindex [read_memory {address} {width} 1] 0]; "
+                  f"write_memory {address} {width} [expr {{($__v & {full & ~mask}) | {value}}}]; set __v")
+        return int(self.script(script).strip(), 0)
+
+    def increment_if(self, check_address, expected, address):
+        """Increment a 32-bit word only if check_address holds expected (same request); True if done."""
+        done = self.script(
+            f"if {{[lindex [read_memory {check_address} 32 1] 0] == {expected}}} "
+            f"{{write_memory {address} 32 [expr {{([lindex [read_memory {address} 32 1] 0] + 1) & 0xffffffff}}]; "
+            "set __hb 1} else {set __hb 0}")
+        return done.strip() == "1"
+
+
+def open_target(profile):
+    if profile.transport == "serial":
+        from .link import (
+            SerialTarget,  # pyserial is optional; only serial profiles need it
+        )
+
+        return SerialTarget(profile)
+    return OpenOcdTarget(profile, RPC(profile.connection))
+
+
+def openocd_only(target, command):
+    if getattr(target, "kind", None) != "openocd":
+        raise ValueError(f"{command} yalnız OpenOCD bağlantısında var (halt/reset/flash debug sunucusu ister)")
+    return target
+
+
+class Device:
+    def __init__(self, profile, target):
+        self.profile, self.target = profile, target
 
     def read(self, address, size, width=8):
         self.profile.check_read(address, size)
         if width not in (8, 16, 32, 64) or size % (width // 8) or address % (width // 8):
             raise ValueError("Geçersiz/hizasız bellek okuma genişliği")
         count = size // (width // 8)
-        values = self.rpc.call(self.guard() + f"read_memory {address} {width} {count}").split()
+        values = self.target.read(address, width, count)
         order = self.profile.data["byte_order"]
-        data = b"".join(int(v, 0).to_bytes(width // 8, order) for v in values)
+        data = b"".join(v.to_bytes(width // 8, order) for v in values)
         if len(data) != size:
             raise ValueError("Eksik bellek okuması")
         return data
@@ -218,10 +338,13 @@ class Device:
             values[name] = value
         return values  # Sequential observations, not an atomic snapshot.
 
-    def verify(self):
+    def verify(self, tick=None):
+        """Compare flash with the artifact; tick() runs between chunks to feed the stub heartbeat."""
         total = 0
         for address, data in self.profile.artifact().regions(self.profile.data["flash_ranges"]):
             for offset in range(0, len(data), 256):
+                if tick:
+                    tick()
                 expected = data[offset:offset + 256]
                 if self.read(address + offset, len(expected)) != expected:
                     raise ValueError(f"Flash build eşleşmiyor: {address + offset:#x}")
@@ -241,12 +364,12 @@ class Device:
 
     def write(self, plan):
         self.verify()
-        # Recheck UID in the same Tcl evaluation as the write. Never retry a mutation.
+        # The transport rechecks the UID in the same request as the write. Never retry a mutation.
         width = plan["size"] * 8
         if width not in (8, 16, 32, 64) or plan["address"] % plan["size"]:
             raise ValueError("Hizalı 8/16/32/64 bit yazma gerekli")
         word = int.from_bytes(bytes.fromhex(plan["bytes_hex"]), self.profile.data["byte_order"])
-        self.rpc.call(self.guard() + f"write_memory {plan['address']} {width} {{{word}}}")
+        self.target.write(plan["address"], width, [word])
         actual = self.read(plan["address"], plan["size"], width).hex()
         return {**plan, "readback_hex": actual, "readback_matches": actual == plan["bytes_hex"],
                 "note": "RAM firmware tarafından yeniden değiştirilebilir; fiziksel sonuç ölçülmedi"}

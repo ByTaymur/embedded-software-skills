@@ -39,7 +39,7 @@ ara örnekler için de JSON satırı üretir. Hata durumunda çıkış kodu 1 ol
 
 | Alan | Anlamı |
 |---|---|
-| `schema_version` | `1` |
+| `schema_version` | `1` veya `2`; `live`/`pins` yalnız `2` ile ([canlı kontrol](live-control.md)) |
 | `name` | Proje/kart profil adı |
 | `project_root` | Profil dosyasının klasörüne göre proje kökü |
 | `byte_order` | Hedef/ELF ile aynı `little` veya `big` |
@@ -51,6 +51,7 @@ ara örnekler için de JSON satırı üretir. Hata durumunda çıkış kodu 1 ol
 | `variables` | İsim → sembol veya ham adres, tip ve isteğe bağlı yazma/erişim bilgisi |
 | `build` | Shell kullanmayan `argv` listesi, isteğe bağlı `timeout_s` |
 | `openocd` | `executable`, `config_files`, isteğe bağlı `shared_filesystem` |
+| `live`, `pins` | Flash'a yazmadan RAM'den pin/çevre birimi kontrolü: [live-control.md](live-control.md) |
 
 Adres/boyutlar JSON tam sayısı veya `0x...` biçiminde metin olabilir. Sayısal
 aralıklar MCU belgesinden alınır. `config_files` ve build komutu `project_root`
@@ -119,8 +120,11 @@ derleme yüklenen dosyayı değiştiremez. Bu imaj yerel firmware verisidir, yay
 açılır. Uzak dosya aktarımı yoktur. Uzun yüklemeler için `connection.timeout_s` değerini
 hedefe göre seç. Hata sonrası kart durmuş/yarım yazılmış olabilir; durumu yeniden oku.
 
-Kendi başına LLM/MCP/web sunucusu başlatılmaz. AI ajanı kaynak düzenleme araçlarıyla
-geliştirir; bu skill komutlarıyla derler ve ölçer. Her hedefte canlı kabul testi gerekir.
+Kendi başına LLM/web sunucusu başlatılmaz. `eat mcp`, yapay zekâ istemcisinin stdio üzerinden
+başlattığı bir MCP sunucusudur ve canlı kontrol araçlarını sunar
+([live-control.md](live-control.md#mcp-köprüsü-yapay-zekâ--işlemcinin-rami)). AI ajanı kaynak
+düzenleme araçlarıyla geliştirir; bu skill ile derler, ölçer ve kartı yönetir. Her hedefte canlı
+kabul testi gerekir.
 
 Teknik kaynaklar: [OpenOCD Tcl RPC](https://openocd.org/doc/html/Tcl-Scripting-API.html),
 [bellek komutları](https://openocd.org/doc/html/General-Commands.html),
@@ -141,11 +145,14 @@ MCU ailesi, seri numarası, transport ve hız hedefe göre belirlenir. STM32 har
 hedeflerde probun o hedefi desteklediğini ayrıca doğrula. Varsayılan seçili target
 kullanılır; çok çekirdekli hedef seçimi ayrı profil/config gerektirir.
 
-Yayın durumu **alpha**: yerel yazılım ve adaptör açılmadan Tcl testleri vardır.
-Gerçek ST-Link V2/V3 + kart bağlantısı/yazma/flash uyumluluğu henüz ölçülmedi.
+Yayın durumu **alpha**. Kart denemesi bir ST-Link V3 + STM32F732 (Cortex-M7) ile sınırlıdır (okuma,
+RAM yazma, tek GPIO tarifi); flash, stub ve seri bağlantı kartta denenmedi. Ayrıntı:
+[canlı kontrol kanıt tablosu](live-control.md#durum-kanıt-tablosu).
 Mevcut destek sınırları ve katkı komutları [paket README'sindedir](../README.md).
 
 ## Entegrasyon doğrulaması — 2026-10-20
+
+Bu bölüm o tarihteki kontrolleri kaydeder; güncel durum kanıt tablosundadır.
 
 Araç bu skill'in içine paketlendi; başka bir kaynak deposuna veya sabit kullanıcı
 yoluna ihtiyaç duymaz. Mevcut kaynak düzenleme ve STM32 iş akışlarında isteğe bağlı

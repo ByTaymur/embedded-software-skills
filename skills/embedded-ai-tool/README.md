@@ -5,13 +5,18 @@ It speaks **OpenOCD Tcl RPC**, normally on port 6666. The connection is:
 
 ```text
 eat / AI agent -> OpenOCD -> ST-Link or another supported probe -> target MCU
+AI client --MCP (stdio)--> eat mcp -> OpenOCD -> probe -> MCU registers / RAM
+AI client --MCP (stdio)--> eat mcp -> serial (UART/USB) -> stub link in the firmware -> MCU registers / RAM
 ```
 
 ST-Link support is provided through OpenOCD. There is no direct ST-Link USB,
 STM32CubeProgrammer, ST-LINK GDB server, or telnet backend in this package.
 Probe/MCU compatibility depends on your OpenOCD version, firmware and reviewed
-configuration. Live hardware qualification is still pending; this is an alpha,
-not a declaration of compatibility with every board.
+configuration. Hardware evidence so far is one STM32F732 (Cortex-M7) with ST-Link V3 (reads,
+RAM writes, one GPIO pin recipe); the stub, dead-man, RAM calls and the serial link have not
+run on hardware. See the
+[evidence table](references/live-control.md#durum-kanıt-tablosu).
+This is an alpha, not a declaration of compatibility with every board.
 
 ## Install
 
@@ -43,7 +48,11 @@ and [measurement lessons (Turkish)](references/lessons.md) are included.
 | Build | Trusted profile argv; shell disabled |
 | Write / halt / resume / reset | Explicit `--execute`; identity guard |
 | Flash | Local/shared filesystem; pinned ELF bytes, erase/write/verify/reset |
-| ST-Link V2/V3 with OpenOCD | Adapter configuration supported by OpenOCD; no live qualification yet |
+| Live RAM-only control: `peek`/`poke`, pin recipes, `safe`, RAM snippets, `serve` | Policy-bounded, never writes flash. On one STM32F732 via OpenOCD: reads, RAM writes, a GPIO pin recipe; the stub, dead-man and RAM calls **not yet on hardware** ([guide](references/live-control.md)) |
+| MCP server (`eat mcp`, stdio, no extra dependency) | Live-control commands as MCP tools over one held session; read, write and pin tools run on one STM32F732 via ST-Link V3 + OpenOCD; other targets untested |
+| Serial transport (`connection.transport: serial`) and `stub/eat_embed` integration | Probe-less live control through a stub linked into any firmware; host-tested against the real C code, compiles warning-free for ARM Cortex-M, RISC-V 32, MIPS32; **not yet run over a real UART** |
+| Stub core (mailbox, dead-man, RAM call) | MCU-independent C in `stub/`, tested on the host against the Python client; **no MCU port or real pin data is included** |
+| ST-Link V2/V3 with OpenOCD | Adapter configuration supported by OpenOCD; one ST-Link V3 + STM32F732 setup exercised, no other probe/MCU qualified |
 | Direct ST-Link without OpenOCD | Not implemented |
 | Remote flash file transfer, DWARF structs/arrays, breakpoints, RTOS view | Not implemented |
 

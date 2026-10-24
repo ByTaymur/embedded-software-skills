@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "name": "example-board (FICTIONAL)",
+  "project_root": ".",
+  "byte_order": "little",
+  "connection": {"host": "127.0.0.1", "port": 6666, "timeout_s": 10},
+  "identity": {"address": "0x50FF0000", "size": 4, "expected_hex": "a1b2c3d4"},
+  "read_ranges": [{"address": "0x50FF0000", "size": "0x100"}],
+  "live": {
+    "mcu_db": "example-mcu.json",
+    "write_ranges": [{"address": "0x50000000", "size": "0x40000"}],
+    "protected_ranges": [{"address": "0x50FF0000", "size": "0x100", "reason": "identity/option area"}],
+    "side_effect_ranges": [{"address": "0x50030008", "size": 4, "reason": "UART data register: read pops FIFO"}],
+    "mailbox": {"address": "0x20000000", "size": "0x200"},
+    "scratch": {"address": "0x20000200", "size": "0x800"},
+    "heartbeat_timeout_ms": 1000,
+    "entry_or": 1
+  },
+  "pins": {
+    "LED": {"mcu_pin": "P0.5", "functions": ["gpio_out", "gpio_read", "pwm"], "safe_function": "gpio_in",
+            "limits": {"duty_permille": {"max": 500}, "freq": {"max": 20000}}},
+    "TX": {"mcu_pin": "P0.7", "functions": ["uart_tx"], "safe_function": "gpio_in"},
+    "SWDIO": {"mcu_pin": "P0.13", "protected": true, "reason": "debug pin: changing it drops the probe"}
+  }
+}
