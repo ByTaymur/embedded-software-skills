@@ -275,6 +275,28 @@ class OpenOcdTarget:
             raise ValueError("Eksik bellek okuması")
         return [int(v, 0) for v in values]
 
+    def halted_registers(self, names):
+        if any(not name.isidentifier() for name in names):
+            raise ValueError("Geçersiz register adı")
+        registers = " ".join(names)
+        response = self.script(
+            'if {[[target current] curstate] != "halted"} {set __regs {}} else {'
+            f'set __r [get_reg -force {{{registers}}}]; list '
+            + " ".join(f"[dict get $__r {name}]" for name in names) + "}")
+        values = response.split()
+        if not values:
+            return None
+        if len(values) != len(names):
+            raise ValueError("Eksik register okuması")
+        return dict(zip(names, (int(v, 0) for v in values), strict=True))
+
+    def read_halted(self, address, width, count):
+        values = self.script('if {[[target current] curstate] != "halted"} {error CORE_NOT_HALTED}; '
+                             f"read_memory {address} {width} {count}").split()
+        if len(values) != count:
+            raise ValueError("Eksik bellek okuması")
+        return [int(v, 0) for v in values]
+
     def write(self, address, width, values):
         self.script(f"write_memory {address} {width} {{{' '.join(map(str, values))}}}")
 

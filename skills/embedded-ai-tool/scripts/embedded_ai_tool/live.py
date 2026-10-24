@@ -241,6 +241,55 @@ class Live:
             return result
         return None
 
+    def watch_variables(self, names, samples=20, interval_ms=200):
+        if type(samples) is not int or not 1 <= samples <= 200:
+            raise ValueError("samples 1..200 olmalı")
+        if type(interval_ms) is not int or not 10 <= interval_ms <= 5000:
+            raise ValueError("interval_ms 10..5000 olmalı")
+        if not names or len(set(names)) != len(names):
+            raise ValueError("Tekil değişken adları gerekli")
+        if (samples - 1) * interval_ms > 60000:
+            raise ValueError("Toplam izleme süresi en fazla 60 saniye olabilir")
+        for name in names:
+            address, size, _ = self.profile.variable(name)
+            self.policy.check_read(address, size)
+        started = time.monotonic()
+        deadline = started + 60
+        verification = self.device.verify(lambda: self.keepalive(throttle=True)) if any(
+            "symbol" in self.profile.variables[name] for name in names) else None
+        rows, limits = [], {}
+        first = None
+        for _ in range(samples):
+            if time.monotonic() >= deadline:
+                break
+            at = time.monotonic()
+            first = at if first is None else first
+            values = {}
+            for name in names:
+                if time.monotonic() >= deadline:
+                    break
+                values.update(self.device.snapshot([name]))
+                if time.monotonic() < deadline:
+                    self.keepalive(throttle=True)
+            if len(values) != len(names):
+                break
+            rows.append([round((at - first) * 1000, 3), *[values[n] for n in names]])
+            for name, value in values.items():
+                old = limits.get(name, {"min": value, "max": value})
+                limits[name] = {"min": min(old["min"], value), "max": max(old["max"], value)}
+            if len(rows) == samples:
+                break
+            until = min(at + interval_ms / 1000, deadline)
+            while True:
+                remaining = until - time.monotonic()
+                if remaining <= 0:
+                    break
+                self.keepalive(throttle=True)
+                time.sleep(min(remaining, 0.01))
+        return {"columns": ["t_ms", *names], "rows": rows, "min_max": limits,
+                "samples": len(rows), "complete": len(rows) == samples,
+                "build_verification": verification, "atomic": False}
+
     # -- peek / poke
     def peek(self, address, count=1, width=32):
         check_width(address, width)
@@ -394,7 +443,18 @@ class Live:
         entry_or = self.config.get("entry_or", 0)
         if type(entry_or) is not int or not 0 <= entry_or <= 0xF:
             raise ValueError("live.entry_or 0..15 olmalı")
-        return self.stub.call(entry | entry_or, args, timeout_s)
+        try:
+            return self.stub.call(entry | entry_or, args, timeout_s)
+        except ValueError as exc:
+            if not str(exc).startswith("RAM parçası hata verdi: fault,") or not self.config.get("arch"):
+                raise
+            from . import arch
+
+            try:
+                evidence = arch.fault_evidence(self.target, self.profile)
+            except (ValueError, OSError) as evidence_error:
+                evidence = {"error": str(evidence_error)}
+            raise ValueError(str(exc) + "; fault_evidence=" + json.dumps(evidence, separators=(",", ":"))) from exc
 
 
 # ----------------------------------------------------------------------- stub
@@ -769,6 +829,12 @@ def run_live(args, profile):
         live = Live(profile, None)
         pins = Pins(live, profile)
 
+    if command == "fault":
+        from .arch import fault_evidence, supported
+
+        if not supported(profile):
+            return fault_evidence(None, profile)
+
     # Offline planning first: nothing below connects unless --execute or a read command.
     plan = None
     if command == "pin" and action == "list":
@@ -829,6 +895,12 @@ def run_live(args, profile):
 
 def execute_live(args, profile, live, pins, plan):
     command, action = args.command, getattr(args, "action", None)
+    if command == "fault":
+        from .arch import fault_evidence
+
+        return fault_evidence(live.target, profile)
+    if command == "watch-variables":
+        return live.watch_variables(args.names, args.samples, args.interval_ms)
     if command == "peek":
         return live.peek(number(args.address), args.count, args.width)
     if command == "stub":

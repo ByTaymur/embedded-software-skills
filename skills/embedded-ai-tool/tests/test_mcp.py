@@ -149,6 +149,71 @@ class McpTests(LiveCase):
         self.assertIs(bridge.session.target.rpc, self.rpc)
         popen.return_value.terminate.assert_called_once()
 
+    def test_watch_table_heartbeat_and_clean_stdout(self):
+        self.edit(lambda d: (d.update(variables={"counter": {"address": "0x50000004", "type": "u32"}}),
+                             d["read_ranges"].append({"address": "0x50000000", "size": "0x100"})))
+        now = [0.0]
+
+        def sleep(seconds):
+            now[0] += seconds
+            self.rpc.put(GPIO + 4, 32, round(now[0] * 100))
+
+        out = io.StringIO()
+        with patch("embedded_ai_tool.live.time.monotonic", side_effect=lambda: now[0]), \
+                patch("embedded_ai_tool.live.time.sleep", side_effect=sleep), contextlib.redirect_stdout(out):
+            replies, _ = self.converse(INIT, call(1, "watch_variables",
+                                                {"names": ["counter"], "samples": 3, "interval_ms": 500}))
+        result = self.payload(replies[1])["result"]
+        self.assertEqual(result["columns"], ["t_ms", "counter"])
+        self.assertEqual([r[0] for r in result["rows"]], [0, 500, 1000])
+        self.assertEqual(result["min_max"]["counter"], {"min": 0, "max": 100})
+        self.assertGreater(self.rpc.get(BOX + 4 * WORD["host_hb"]), 2)
+        self.assertEqual(out.getvalue(), "")
+        self.assertTrue(result["complete"])
+
+    def test_watch_limits_policy_and_fault_tool(self):
+        self.edit(lambda d: (d.update(variables={"counter": {"address": "0x50000004", "type": "u32"}}),
+                             d["read_ranges"].append({"address": "0x50000000", "size": "0x100"})))
+        invalid = ({"samples": 0}, {"samples": 201}, {"interval_ms": 9}, {"interval_ms": 5001},
+                   {"samples": 200, "interval_ms": 5000}, {"samples": True}, {"names": []})
+        for extra in invalid:
+            with self.subTest(extra=extra):
+                replies, _ = self.converse(INIT, call(1, "watch_variables", {"names": ["counter"], **extra}))
+                self.assertTrue(replies[1]["result"]["isError"])
+        self.edit(lambda d: d["live"].update(side_effect_ranges=[{"address": "0x50000004", "size": 4}]))
+        replies, _ = self.converse(INIT, call(1, "watch_variables", {"names": ["counter"], "samples": 1}),
+                                   call(2, "fault_evidence"))
+        self.assertIn("Okuma izni", self.payload(replies[1])["error"])
+        self.assertIn("desteklenmiyor", self.payload(replies[2])["result"]["note"])
+        self.assertFalse(any("halt" in s or "reset" in s for s in self.rpc.scripts))
+        self.assertFalse(mcp_server.TOOLS["fault_evidence"]["mutating"])
+        self.assertFalse(mcp_server.TOOLS["watch_variables"]["mutating"])
+
+    def test_unknown_fault_arch_stays_offline(self):
+        replies, factory = self.converse(INIT, call(1, "fault_evidence"),
+                                         connect_error=ConnectionRefusedError("refused"))
+        self.assertFalse(self.payload(replies[1])["result"]["supported"])
+        factory.assert_not_called()
+
+    def test_watch_stops_at_deadline(self):
+        self.edit(lambda d: (d.update(variables={"counter": {"address": "0x50000004", "type": "u32"}}),
+                             d["read_ranges"].append({"address": "0x50000000", "size": "0x100"})))
+        live = self.live()
+        now = [0.0]
+        original = live.device.snapshot
+
+        def read(names):
+            values = original(names)
+            now[0] += 20
+            return values
+
+        with patch("embedded_ai_tool.live.time.monotonic", side_effect=lambda: now[0]), \
+                patch.object(live.device, "snapshot", side_effect=read):
+            result = live.watch_variables(["counter"], 4, 10)
+        self.assertFalse(result["complete"])
+        self.assertLess(result["samples"], 4)
+        self.assertLessEqual(now[0], 60)
+
     def test_param_and_argument_translation(self):
         argv = mcp_server.TOOLS["pin_apply"]["argv"]({"pin": "LED", "function": "pwm",
                                                       "params": {"freq": 1000, "duty_permille": 250},

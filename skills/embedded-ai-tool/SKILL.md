@@ -119,3 +119,5 @@ From the skill directory run `python -m unittest discover -s tests -v` and
 installed copy. Report skipped optional OpenOCD tests. Host tests do not count as
 live board/firmware verification. Keep profiles, traces, credentials, generated
 packages, and raw test/build logs outside the skill's maintained resources.
+
+MCP `watch_variables` returns bounded sample tables; `eat fault` / MCP `fault_evidence` reads architecture-selected fault evidence (see [live control](references/live-control.md)).

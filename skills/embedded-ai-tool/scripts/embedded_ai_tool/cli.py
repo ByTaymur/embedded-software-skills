@@ -28,7 +28,7 @@ from .core import (
 )
 from .live import Session, run_live
 
-LIVE = {"peek", "poke", "pin", "safe", "ram", "stub"}
+LIVE = {"peek", "poke", "pin", "safe", "ram", "stub", "fault", "watch-variables"}
 SERVE_ALLOWED = LIVE | {"identity", "verify", "read"}
 
 
@@ -62,6 +62,11 @@ def parser():
     syms.add_argument("--filter", default="")
     sub.add_parser("identity")
     sub.add_parser("verify")
+    sub.add_parser("fault", help="Mimariye özel fault kanıtını oku")
+    sampling = sub.add_parser("watch-variables", help="Sınırlı değişken tablosu oku")
+    sampling.add_argument("names", nargs="+")
+    sampling.add_argument("--samples", type=int, default=20)
+    sampling.add_argument("--interval-ms", type=int, default=200)
     read = sub.add_parser("read")
     read.add_argument("names", nargs="+")
     watch = sub.add_parser("watch")

@@ -69,6 +69,14 @@ tool("verify_build", "Flash'taki imajı profildeki ELF ile karşılaştırır (d
 tool("read_variables", "Profilde tanımlı değişkenleri okur. Ardışık okumadır, atomik anlık görüntü değildir.",
      lambda a: ["read", *a["names"]],
      {"names": {"type": "array", "items": {"type": "string"}, "minItems": 1}}, ["names"])
+tool("watch_variables", "CPU durdurulmadan değişken tablosu ve min/max okur; en fazla 60 saniye.",
+     lambda a: ["watch-variables", *a["names"], "--samples", str(a.get("samples", 20)),
+                "--interval-ms", str(a.get("interval_ms", 200))],
+     {"names": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+      "samples": {"type": "integer", "minimum": 1, "maximum": 200, "default": 20},
+      "interval_ms": {"type": "integer", "minimum": 10, "maximum": 5000, "default": 200}}, ["names"])
+tool("fault_evidence", "Profil live.arch mimarisinin fault kanıtını okur; hedef durdurulmaz.",
+     lambda a: ["fault"])
 tool("peek", "İzinli bir adresten register/bellek okur. Okuması yan etkili registerlar reddedilir.",
      lambda a: ["peek", str(a["address"]), "--count", str(a.get("count", 1)), "--width", str(a.get("width", 32))],
      {"address": ADDRESS, "count": {"type": "integer", "minimum": 1, "maximum": 256, "default": 1},
@@ -136,6 +144,10 @@ def check(schema, arguments):
         spec = schema["properties"][key]
         if not is_type(value, spec["type"]):
             raise ValueError(f"{key} tipi {spec['type']} olmalı")
+        if type(value) in (int, float) and not spec.get("minimum", value) <= value <= spec.get("maximum", value):
+            raise ValueError(f"{key} izinli aralık dışında")
+        if "minItems" in spec and len(value) < spec["minItems"]:
+            raise ValueError(f"{key} boş olamaz")
         items = spec.get("items") or {}
         if items and not all(is_type(item, items["type"]) for item in value):
             raise ValueError(f"{key} öğeleri {items['type']} olmalı")
@@ -241,7 +253,12 @@ class Bridge:
             argv = spec["argv"](arguments)
         except (ValueError, KeyError, TypeError) as exc:
             return reply({"ok": False, "error": f"Geçersiz argüman: {exc}"})
-        if spec["online"](arguments):
+        online = spec["online"](arguments)
+        if name == "fault_evidence":
+            from .arch import supported
+
+            online = supported(self.profile)
+        if online:
             try:
                 self.connect()
             except OSError as exc:
