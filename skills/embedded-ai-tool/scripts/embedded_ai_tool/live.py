@@ -49,8 +49,8 @@ FUNCTIONS = {"min": min, "max": max}
 
 # ---------------------------------------------------------------- expressions
 
-def evaluate(value, names):
-    """Integer-only expression evaluator for recipe fields. No attribute access or calls but min/max."""
+def evaluate(value, names, register=None, svd=None):
+    """Integer expressions with min/max and register-scoped field helpers only."""
     if type(value) is int:
         return value
     if not isinstance(value, str) or not value.strip() or len(value) > MAX_EXPR:
@@ -59,10 +59,10 @@ def evaluate(value, names):
         tree = ast.parse(value.strip(), mode="eval")
     except SyntaxError as exc:
         raise ValueError(f"İfade çözümlenemedi: {value}") from exc
-    return _evaluate(tree.body, names)
+    return _evaluate(tree.body, names, register, svd)
 
 
-def _evaluate(node, names):
+def _evaluate(node, names, register=None, svd=None):
     if isinstance(node, ast.Constant) and type(node.value) is int:
         return node.value
     if isinstance(node, ast.Name):
@@ -70,9 +70,9 @@ def _evaluate(node, names):
             raise ValueError(f"Tanımsız parametre: {node.id}")
         return names[node.id]
     if isinstance(node, ast.UnaryOp) and type(node.op) in UNARYOPS:
-        return UNARYOPS[type(node.op)](_evaluate(node.operand, names))
+        return UNARYOPS[type(node.op)](_evaluate(node.operand, names, register, svd))
     if isinstance(node, ast.BinOp) and type(node.op) in BINOPS:
-        left, right = _evaluate(node.left, names), _evaluate(node.right, names)
+        left, right = _evaluate(node.left, names, register, svd), _evaluate(node.right, names, register, svd)
         if isinstance(node.op, ast.LShift | ast.RShift) and not 0 <= right <= 64:
             raise ValueError("Kaydırma miktarı 0..64 olmalı")
         if isinstance(node.op, ast.FloorDiv | ast.Mod) and right == 0:
@@ -81,9 +81,27 @@ def _evaluate(node, names):
         if abs(result) >= LIMIT:
             raise ValueError("İfade sonucu çok büyük")
         return result
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in {"field_mask", "field_value"} and not node.keywords):
+        count = 1 if node.func.id == "field_mask" else 2
+        if (len(node.args) != count or not isinstance(node.args[0], ast.Constant)
+                or not isinstance(node.args[0].value, str) or register is None or svd is None):
+            raise ValueError("Alan yardımcısı için adlandırılmış register ve geçerli alan gerekli")
+        name = expand_name(node.args[0].value, names)
+        if "." in name:
+            raise ValueError("Alan adı yalnız seçilen register içinde olmalı")
+        field = svd.lookup(f"{register.name}.{name}")
+        if getattr(field, "register", None) is not register:
+            raise ValueError("Alan seçilen register içinde değil")
+        if count == 1:
+            return ((1 << field.width) - 1) << field.offset
+        value = _evaluate(node.args[1], names, register, svd)
+        if type(value) is not int or not 0 <= value < 1 << field.width:
+            raise ValueError(f"Alan değeri genişliğe sığmıyor: {name}")
+        return value << field.offset
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in FUNCTIONS
             and node.args and not node.keywords):
-        return FUNCTIONS[node.func.id](*[_evaluate(arg, names) for arg in node.args])
+        return FUNCTIONS[node.func.id](*[_evaluate(arg, names, register, svd) for arg in node.args])
     raise ValueError("İfadede izin verilmeyen öğe")
 
 
@@ -127,7 +145,22 @@ def check_width(address, width):
 
 # -------------------------------------------------------------------- recipes
 
-def compile_steps(recipe, names):
+def expand_name(value, names):
+    """Substitute plain parameter names only; formatting and attribute traversal are forbidden."""
+    def substitute(match):
+        key = match.group(1)
+        if key not in names or type(names[key]) not in (int, str):
+            raise ValueError(f"Geçersiz ad parametresi: {key}")
+        return str(names[key])
+
+    value = re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", substitute, value)
+    if len(value) > MAX_EXPR or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*(?:\[[A-Za-z0-9_]+\])?(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[[A-Za-z0-9_]+\])?)*", value):
+        raise ValueError(f"Geçersiz SVD adı: {value}")
+    return value
+
+
+def compile_steps(recipe, names, svd=None):
     """Turn a declarative recipe into concrete integer steps. Pure and offline."""
     names = dict(names)
     for key, expression in recipe.get("derive", {}).items():
@@ -143,26 +176,38 @@ def compile_steps(recipe, names):
                 raise ValueError("delay_ms 0..1000 olmalı")
             steps.append({"op": op, "ms": ms})
             continue
-        width = raw.get("width", 32)
-        address = evaluate(raw["address"], names)
+        register = None
+        address = raw["address"]
+        if isinstance(address, str) and ("." in address or "{" in address):
+            if svd is None:
+                raise ValueError("Adlandırılmış tarif için live.svd gerekli")
+            register = svd.lookup(expand_name(address, names))
+            if not hasattr(register, "fields"):
+                raise ValueError("address bir SVD register adı olmalı")
+            address = register.address
+        else:
+            address = evaluate(address, names)
+        width = raw.get("width", register.size if register else 32)
+        if register and width != register.size:
+            raise ValueError("Tarif genişliği SVD register genişliğiyle uyuşmuyor")
         check_width(address, width)
         full = (1 << width) - 1
         step = {"op": op, "address": address, "width": width}
         if op in ("write", "modify"):
-            mask = evaluate(raw["mask"], names) if op == "modify" else full
-            value = evaluate(raw["value"], names)
+            mask = evaluate(raw["mask"], names, register, svd) if op == "modify" else full
+            value = evaluate(raw["value"], names, register, svd)
             verify = raw.get("verify", True)
             if type(verify) is not bool or not 0 < mask <= full or not 0 <= value <= full or value & ~mask:
                 raise ValueError(f"Geçersiz maske/değer/doğrulama: {raw}")
             step.update(mask=mask, value=value, verify=verify)
         elif op == "read":
-            mask = evaluate(raw.get("mask", full), names)
+            mask = evaluate(raw.get("mask", full), names, register, svd)
             shift = raw.get("shift", 0)
             if not 0 < mask <= full or type(shift) is not int or not 0 <= shift < width or not raw.get("name"):
                 raise ValueError(f"Geçersiz read adımı: {raw}")
             step.update(mask=mask, shift=shift, name=str(raw["name"]))
         else:  # poll
-            mask, value = evaluate(raw["mask"], names), evaluate(raw["value"], names)
+            mask, value = evaluate(raw["mask"], names, register, svd), evaluate(raw["value"], names, register, svd)
             timeout = evaluate(raw.get("timeout_ms", 100), names)
             if not 0 < mask <= full or not 0 <= value <= full or value & ~mask or not 1 <= timeout <= 2000:
                 raise ValueError(f"Geçersiz poll adımı: {raw}")
@@ -274,14 +319,20 @@ class Live:
     def prepare(self, steps):
         """Apply policy to every step; side-effect registers are written blind, never read."""
         prepared = []
+        svd = self.profile.svd() if self.config.get("svd") else None
+        hazards = [r for p in svd.peripherals() for r in svd.registers(p)
+                   if r.side_effect or r.access == "write-only"] if svd else []
         for step in steps:
             step = dict(step)
+            unreadable = step["op"] != "delay_ms" and any(
+                overlaps(step["address"], step["width"] // 8, [(r.address, r.address + (r.size + 7) // 8)])
+                for r in hazards)
             if step["op"] in ("write", "modify"):
                 size = step["width"] // 8
                 self.policy.check_write(step["address"], size)
                 # Unverified (write-only / write-1-to-clear) and side-effect registers are never read:
                 # a read-modify-write would write back pending W1C flags or junk read from them.
-                blind = self.policy.side_effects(step["address"], size) or not step["verify"]
+                blind = unreadable or self.policy.side_effects(step["address"], size) or not step["verify"]
                 full = (1 << step["width"]) - 1
                 if blind and step["mask"] != full:
                     raise ValueError(f"Yan etkili veya doğrulamasız (W1C/yalnız-yazma) register maskeli "
@@ -289,6 +340,8 @@ class Live:
                 step["blind"] = blind
                 step["verify"] = step["verify"] and not blind
             elif step["op"] in ("read", "poll"):
+                if unreadable or overlaps(step["address"], step["width"] // 8, self.policy.protected):
+                    raise ValueError("Okuma izni yok (SVD okuma yan etkili, yalnız-yazma veya korumalı alan)")
                 self.policy.check_read(step["address"], step["width"] // 8)
             prepared.append(step)
         return prepared
@@ -601,7 +654,8 @@ class Pins:
             if not low <= value <= high:
                 raise ValueError(f"{key}={value!r} izinli aralık dışında ({low}..{high})")
             names[key] = resolved[key] = value
-        steps = self.live.prepare(compile_steps(recipe, names))
+        steps = self.live.prepare(compile_steps(
+            recipe, names, self.profile.svd() if self.live.config.get("svd") else None))
         resources = [re.sub(r"\{(\w+)\}", lambda m: str(names[m.group(1)]), item)
                      for item in [*recipe.get("resources", []), *entry.get("resources", [])]]
         return {"pin": name, "function": function, "inputs": resolved, "resources": resources, "steps": steps}
