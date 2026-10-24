@@ -18,7 +18,17 @@ from embedded_ai_tool import cli as cli_module
 from embedded_ai_tool import core as core_module
 from embedded_ai_tool.cli import parser, run, serve_request
 from embedded_ai_tool.core import RPC, OpenOcdTarget, Profile
-from embedded_ai_tool.live import MAGIC, WORD, Live, Pins, Session, StepFailed, evaluate
+from embedded_ai_tool.live import (
+    MAGIC,
+    WORD,
+    Live,
+    Pins,
+    Session,
+    StepFailed,
+    compile_steps,
+    evaluate,
+)
+from embedded_ai_tool.svd import Device as SvdDevice
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "references" / "examples"
 UID_ADDRESS, UID = 0x50FF0000, bytes.fromhex("a1b2c3d4")
@@ -677,3 +687,125 @@ class RpcTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NamedRecipeTests(LiveCase):
+    def setUp(self):
+        super().setUp()
+        self.svd_path = self.root / "device.svd"
+        shutil.copy(Path(__file__).parent / "fixtures" / "svd" / "fictional.svd", self.svd_path)
+        self.svd = SvdDevice.load(self.svd_path)
+        self.map_path = self.root / "map.json"
+        shutil.copy(EXAMPLES / "example-pin-map.json", self.map_path)
+        self.out = self.root / "new.json"
+
+    def scaffold(self):
+        return run(parser().parse_args(["mcu-db", "scaffold", "--svd", str(self.svd_path),
+                                       "--map", str(self.map_path), "--out", str(self.out)]))
+
+    def use_scaffold(self):
+        self.edit(lambda d: (d["live"].update(svd="device.svd", mcu_db="new.json"),
+                             d.update(pins={"PIN": {"mcu_pin": "P0.0", "safe_function": "gpio_in",
+                                                    "functions": ["gpio_out", "gpio_in", "gpio_read"]}})))
+        return self.pins()
+
+    def test_named_and_numeric_steps_are_identical(self):
+        named = {"steps": [
+            {"op": "modify", "address": "PORT.MODE", "mask": 'field_mask("FLAG{pin}")',
+             "value": 'field_value("FLAG{pin}", level)'},
+            {"op": "write", "address": "PORT.DATA{pin}", "value": 12},
+            {"op": "read", "address": "PORT.THIRD", "mask": 'field_mask("STATE")', "name": "raw"},
+            {"op": "poll", "address": "PORT.MODE", "mask": 'field_mask("COPY")',
+             "value": 'field_value("COPY", 2)'},
+        ]}
+        numeric = {"steps": [
+            {"op": "modify", "address": GPIO, "mask": 64, "value": 64},
+            {"op": "write", "address": GPIO + 16, "value": 12},
+            {"op": "read", "address": GPIO + 8, "width": 16, "mask": 7, "name": "raw"},
+            {"op": "poll", "address": GPIO, "mask": 56, "value": 16},
+        ]}
+        self.assertEqual(compile_steps(named, {"pin": 0, "level": 1}, self.svd),
+                         compile_steps(numeric, {}))
+        with self.assertRaisesRegex(ValueError, "live.svd"):
+            compile_steps(named, {"pin": 0, "level": 1})
+
+    def test_bad_register_field_expression_and_overflow(self):
+        expressions = ['field_mask("ABSENT")', 'field_mask("PORT.SECOND.STATE")',
+                       'field_value("STATE", 8)', 'field_value("STATE", -1)',
+                       'field_mask("{pin.__class__}")', 'field_mask("STATE", 1)',
+                       'field_value("STATE", x=1)', 'field_mask(__import__("os"))',
+                       'field_mask("STATE").real', 'other("STATE")']
+        for expression in expressions:
+            with self.subTest(expression=expression), self.assertRaises(ValueError):
+                compile_steps({"steps": [{"op": "write", "address": "PORT.MODE", "value": expression}]},
+                              {}, self.svd)
+        for address in ("PORT.ABSENT", "PORT.MODE.STATE", "PORT.{missing}", "PORT.{pin.real}"):
+            with self.subTest(address=address), self.assertRaises(ValueError):
+                compile_steps({"steps": [{"op": "write", "address": address, "value": 0}]}, {}, self.svd)
+        with self.assertRaises(ValueError):
+            compile_steps({"steps": [{"op": "write", "address": "PORT.THIRD", "width": 32, "value": 0}]},
+                          {}, self.svd)
+
+    def test_scaffold_round_trip_and_policy(self):
+        self.assertEqual(self.scaffold()["pins"], ["P0.0"])
+        data = json.loads(self.out.read_text(encoding="utf-8"))
+        self.assertEqual(set(data["pins"]["P0.0"]["functions"]), {"gpio_in", "gpio_out", "gpio_read"})
+        self.assertTrue(all(isinstance(s["address"], str) and s["address"].startswith("PORT.")
+                            for r in data["recipes"].values() for s in r["steps"]))
+        _, pins = self.use_scaffold()
+        for level in (0, 1):
+            plan = pins.plan_apply("PIN", "gpio_out", {"level": level})
+            self.assertEqual(plan["steps"][0]["value"], level << 6)
+        self.assertEqual(pins.plan_apply("PIN", "gpio_read", {})["steps"][0]["shift"], 6)
+        self.edit(lambda d: d["live"].update(write_ranges=[]))
+        with self.assertRaisesRegex(ValueError, "write_ranges"):
+            self.pins()
+        self.assertEqual(self.rpc.scripts, [])
+
+    def test_scaffold_never_overwrites(self):
+        self.scaffold()
+        before = self.out.read_bytes()
+        with self.assertRaises(FileExistsError):
+            self.scaffold()
+        self.assertEqual(self.out.read_bytes(), before)
+
+    def test_scaffold_validates_mapping_before_creating_output(self):
+        original = self.map_path.read_text(encoding="utf-8")
+        for old, new in (("FLAG0", "MISSING"), ('"high": 1', '"high": 2'),
+                         ('"PORT.THIRD"', '"PORT.FIELD_HAZARD"')):
+            self.map_path.write_text(original.replace(old, new), encoding="utf-8")
+            with self.subTest(new=new), self.assertRaises(ValueError):
+                self.scaffold()
+            self.assertFalse(self.out.exists())
+
+    def test_explicit_atomic_set_clear_mapping(self):
+        mapping = json.loads(self.map_path.read_text(encoding="utf-8"))
+        mapping["pins"]["P0.0"]["atomic"] = {
+            "set": {"register": "PORT.SECOND", "field": "FLAG0", "value": 1},
+            "clear": {"register": "PORT.SECOND", "field": "FLAG1", "value": 1}}
+        self.map_path.write_text(json.dumps(mapping), encoding="utf-8")
+        self.scaffold()
+        _, pins = self.use_scaffold()
+        for level in (0, 1):
+            step = pins.plan_apply("PIN", "gpio_out", {"level": level})["steps"][0]
+            self.assertEqual(step["value"], 64 if level else 128)
+            self.assertTrue(step["blind"])
+            self.assertFalse(step["verify"])
+
+    def test_svd_read_actions_and_protection_remain_enforced(self):
+        self.edit(lambda d: d["live"].update(svd="device.svd"))
+        live = self.live()
+        for register in ("PORT.HAZARD", "PORT.FIELD_HAZARD"):
+            for op in ("read", "poll", "modify"):
+                raw = {"op": op, "address": register, "mask": 1, "value": 1, "name": "raw"}
+                with self.subTest(register=register, op=op), self.assertRaises(ValueError):
+                    live.prepare(compile_steps({"steps": [raw]}, {}, self.svd))
+            step = live.prepare(compile_steps({"steps": [{"op": "write", "address": register,
+                                                         "value": 1}]}, {}, self.svd))[0]
+            self.assertTrue(step["blind"])
+        for register in ("PORT.OUTSIDE", "PORT.MODE"):
+            if register == "PORT.MODE":
+                live.policy.protected.append((GPIO, GPIO + 4))
+            with self.subTest(register=register), self.assertRaises(ValueError):
+                live.prepare(compile_steps({"steps": [{"op": "write", "address": register,
+                                                       "value": 1}]}, {}, self.svd))

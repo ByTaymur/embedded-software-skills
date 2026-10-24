@@ -1,0 +1,12 @@
+{
+  "name": "Fictional SVD mapping; host tests only, never use on hardware",
+  "pins": {
+    "P0.0": {
+      "level": {"register": "PORT.SECOND", "field": "FLAG0", "low": 0, "high": 1},
+      "direction": [
+        {"register": "PORT.MODE", "field": "STATE", "input": 0, "output": 1}
+      ],
+      "input": {"register": "PORT.THIRD", "field": "FLAG0"}
+    }
+  }
+}

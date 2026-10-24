@@ -23,6 +23,7 @@ firmware dosyaları kaydedilmez. "1 kart": 2026-10-24, STM32F732 (Cortex-M7), ST
 |---|---|---|---|
 | OpenOCD Tcl RPC, UID koruması, `identity`, `peek` | Var | 1 kart | Gerekmez |
 | SVD ile adla register/bit alanı okuma ve çevrimdışı listeleme | Var | Yok | Gerekmez |
+| SVD adlarıyla pin tarifleri ve `mcu-db scaffold` | Var | Yok | Yok |
 | `poke`: tam, maskeli oku-değiştir-yaz, 16 bit, `--no-verify` kör yazma; politika retleri | Var | 1 kart (RAM'de) | Gerekmez |
 | `pin apply` / `pin release` (GPIO çıkış tarifi) | Var | 1 kart, tek LED pini | Var: LED gözle; aynı porttaki diğer çıkışların değişmediği register okumasıyla |
 | `pin restore`, `safe`, kaynak çakışması, `partial` kaydı | Var | Yok | Yok |
@@ -76,7 +77,7 @@ pin reddedilir. SWDIO/SWCLK gibi debug pinlerini **her zaman** `protected` yap.
 
 ## MCU veri dosyası
 
-MCU'ya özgü bilgi kodda değil veridedir. Adresler ve bitler referans kılavuzdan alınır;
+MCU'ya özgü bilgi kodda değil veridedir. Adresler ve bitler referans kılavuzdan veya SVD'den alınır;
 **tahmin edilmez.** Şema: [examples/example-mcu.json](examples/example-mcu.json).
 
 - `pins.<MCU pini>.functions.<işlev>` → `recipe` adı, `params` (tam sayı ifadeleri), isteğe bağlı `resources`.
@@ -87,10 +88,39 @@ MCU'ya özgü bilgi kodda değil veridedir. Adresler ve bitler referans kılavuz
   yazma-only veya yazarak-temizlenen (W1C) registerlar içindir: adım **kör, tam genişlikte** yazılır,
   register hiç okunmaz; bu yüzden maske verilemez ve geri alma kaydı tutulamaz.
 - İfadeler yalnız **tam sayı** aritmetiğidir: `+ - * // % << >> & | ^ ~`, parantez, `min`, `max`
-  ve parametre adları. Nitelik erişimi, çağrı, kayan nokta ve `/` yoktur; uzunluk ≤ 256.
+  ve parametre adları. Ek çağrılar yalnız aşağıdaki iki alan yardımcısıdır; nitelik erişimi,
+  kayan nokta ve `/` yoktur; uzunluk ≤ 256.
 - `resources` yalnız **paylaşılamayan** kaynakları listeler (örn. `UART0`, `TIM0_CH1`). İki pin
   aynı kaynağı talep edemez. Paylaşılabilir kaynakları (ortak timer clock'u) yazma.
 - Dead-man açıkken `safe_function` tarifi yalnız `write`/`modify` içerebilir; stub bunları tekrar oynatır.
+
+`live.svd` varsa `address` register adı olabilir; yoksa adlandırılmış adım reddedilir:
+
+```json
+{"op": "modify", "address": "GPIO{port}.MODER",
+ "mask": "field_mask(\"MODER{pin}\")", "value": "field_value(\"MODER{pin}\", 1)"}
+```
+
+Ad/alan içindeki `{param}` düz parametre adıdır; biçimlendirme ve nitelik erişimi yoktur.
+Alan yardımcıları yalnız bu registerın alanlarını kabul eder; taşan alan değeri reddedilir.
+Genişlik varsayılanı SVD'den gelir, verilirse aynı olmalıdır. Sayısal adresler geçerlidir.
+SVD izin vermez: somut adımlar yine `Live.prepare`, `write_ranges`, korumalı alan,
+yan etki ve SVD `readAction` denetimlerinden geçer.
+
+```text
+eat mcu-db scaffold --svd device.svd --map pin-map.json --out new-mcu.json
+```
+
+Komut çevrimdışıdır ve mevcut dosyanın üzerine yazmaz. Kurgusal eşleme:
+[example-pin-map.json](examples/example-pin-map.json), testlerdeki `fictional.svd` içindir.
+`pins.<pin>` altında `level` (`register`, `field`, `low`, `high`), `direction` listesi
+(her öğede `register`, `field`, `input`, `output`) ve `input` (`register`, `field`) zorunludur.
+Yön listesi ayrı pin-mux bloklarını da açıkça eşleyebilir. İsteğe bağlı `atomic` içinde
+`set` ve `clear`, aynı registerdaki `register`, `field`, `value` eşlemeleridir;
+seçilen seviye kör tam-register yazması üretir. Register adından işlev çıkarılmaz.
+Kullanıcı anlamları doğrular; araç SVD adlarını ve alan değerlerini doğrulayıp her pin için
+`gpio_out`, `gpio_in`, `gpio_read` tariflerini üretir. Bu başlangıç dosyası clock/açılış
+adımlarını tahmin etmez; donanımda kullanmadan önce incelenmelidir.
 
 ## Komutlar
 
@@ -233,7 +263,8 @@ ve `DATA[0]` kullanılabilir. MCP karşılıkları `read_register {names: [...]}
 SVD hiçbir izin vermez. Okumalar mevcut bellek politikasından ve her istekte kimlik
 korumasından geçer; korumalı alanlar reddedilir. Register veya herhangi bir alanı
 `readAction` olarak `clear`, `set`, `modify` veya `modifyExternal` belirtiyorsa,
-profil ayrıca listelemese bile okuma reddedilir. Adla yazma yoktur. OpenOCD ve seri
+profil ayrıca listelemese bile okuma reddedilir. `poke` adla yazmaz; pin tarifleri adlandırılmış
+biçimi kullanabilir. OpenOCD ve seri
 bağlantı aynı okuma yolunu kullanır. Host testleri gerçek kart kanıtı değildir.
 
 ## RAM parçası

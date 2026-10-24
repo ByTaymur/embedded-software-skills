@@ -85,6 +85,11 @@ def parser():
     search = sub.add_parser("search")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=30)
+    mcu = sub.add_parser("mcu-db", help="SVD ve kullanıcı eşlemesinden MCU veri dosyası üret")
+    scaffold = mcu.add_subparsers(dest="action", required=True).add_parser("scaffold")
+    scaffold.add_argument("--svd", type=Path, required=True)
+    scaffold.add_argument("--map", type=Path, required=True)
+    scaffold.add_argument("--out", type=Path, required=True)
     live_parser(sub)
     return p
 
@@ -211,6 +216,10 @@ def stub_sources():
 
 
 def run(args):
+    if args.command == "mcu-db":
+        from .mcu_db import scaffold
+
+        return scaffold(args.svd, args.map, args.out)
     if args.command == "doctor":
         return {"python": sys.version, "openocd": shutil.which("openocd"),
                 "stub_sources": stub_sources(),
