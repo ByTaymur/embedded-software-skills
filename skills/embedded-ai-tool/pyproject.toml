@@ -39,7 +39,7 @@ embedded_ai_tool = "scripts/embedded_ai_tool"
 "embedded_ai_tool.references" = "references"
 
 [tool.setuptools.package-data]
-"embedded_ai_tool.stub" = ["*.c", "*.h", "*.md"]
+"embedded_ai_tool.stub" = ["*.c", "*.h", "*.md", "ports/**/*.c", "ports/**/*.h", "ports/**/*.md", "ports/**/*.txt", "ports/**/*.yml"]
 "embedded_ai_tool.references" = ["*.md", "**/*.md", "**/*.json"]
 
 [tool.ruff]
