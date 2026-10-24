@@ -22,6 +22,7 @@ firmware dosyaları kaydedilmez. "1 kart": 2026-10-24, STM32F732 (Cortex-M7), ST
 | Parça | Host testi | Kart denemesi | Fiziksel ölçüm |
 |---|---|---|---|
 | OpenOCD Tcl RPC, UID koruması, `identity`, `peek` | Var | 1 kart | Gerekmez |
+| SVD ile adla register/bit alanı okuma ve çevrimdışı listeleme | Var | Yok | Gerekmez |
 | `poke`: tam, maskeli oku-değiştir-yaz, 16 bit, `--no-verify` kör yazma; politika retleri | Var | 1 kart (RAM'de) | Gerekmez |
 | `pin apply` / `pin release` (GPIO çıkış tarifi) | Var | 1 kart, tek LED pini | Var: LED gözle; aynı porttaki diğer çıkışların değişmediği register okumasıyla |
 | `pin restore`, `safe`, kaynak çakışması, `partial` kaydı | Var | Yok | Yok |
@@ -131,7 +132,7 @@ yalnız aynı Tcl isteğinde mailbox `magic` görülürse yazılır; stub yoksa 
 der ve o RAM'e hiç dokunulmaz. Bir RPC çağrısı yarıda kalırsa (zaman aşımı) bağlantı kapatılır ve
 oturum biter: geç gelen yanıt sonraki isteğe karışmaz. İstek sırasında Ctrl+C oturumu bitirir.
 argparse yardım/hata metni stdout'a değil yanıtın `output` alanına yazılır.
-İzinli komutlar: `peek poke pin safe ram stub identity verify read`. Oturum biterse
+İzinli komutlar: `peek poke pin safe ram stub reg identity verify read`. Oturum biterse
 heartbeat durur ve stub süre sonunda pinleri güvenli duruma alır. **Tek seferlik CLI
 çağrısı da bu süreyi başlatır**: `pin apply` sonrası çıkış, `serve` çalışmıyorsa
 yaklaşık `heartbeat_timeout_ms` sonra geri alınır. Kalıcı bırakmak için `serve` kullan.
@@ -179,6 +180,25 @@ veya `claude mcp add embedded-ai-tool -- python <skill>/scripts/eat.py --profile
   (`mcp__embedded-ai-tool__peek` vb.) izin listesine eklemek güvenlidir; değiştirenleri onaya bırakın.
 - İstemci kapanınca heartbeat durur ve stub, `heartbeat_timeout_ms` sonra pinleri güvenli duruma alır.
 - Desteklenmeyenler: `watch`, `write`, `flash`, `control` (halt/reset) ve MCP kaynakları/istemleri.
+
+## SVD
+
+İsteğe bağlı `live.svd`, profil dosyasına göre çözülen yerel CMSIS-SVD yoludur:
+`"live": {"svd": "device.svd"}`. SVD byte order belirtirse profilin `byte_order`
+değeriyle uyuşmalıdır. Dosya en fazla 64 MB olabilir; DOCTYPE/ENTITY reddedilir.
+
+`eat reg list [ÇEVRE_BİRİMİ] [--filter METİN]` bağlantı açmadan registerları listeler.
+`eat reg read PORT.MODE PORT.MODE.STATE` registerı bir kez okuyup adres, genişlik,
+ham değer ve adlandırılmış bit alanlarını (varsa enum adlarıyla) döndürür. Profil
+`--profile` ile seçilir. Adlar büyük/küçük harfe duyarsızdır; dizilerde `DATA0`
+ve `DATA[0]` kullanılabilir. MCP karşılıkları `read_register {names: [...]}` ve
+çevrimdışı `list_registers {peripheral?, filter?}` araçlarıdır; `serve` içinde `reg` desteklenir.
+
+SVD hiçbir izin vermez. Okumalar mevcut bellek politikasından ve her istekte kimlik
+korumasından geçer; korumalı alanlar reddedilir. Register veya herhangi bir alanı
+`readAction` olarak `clear`, `set`, `modify` veya `modifyExternal` belirtiyorsa,
+profil ayrıca listelemese bile okuma reddedilir. Adla yazma yoktur. OpenOCD ve seri
+bağlantı aynı okuma yolunu kullanır. Host testleri gerçek kart kanıtı değildir.
 
 ## RAM parçası
 

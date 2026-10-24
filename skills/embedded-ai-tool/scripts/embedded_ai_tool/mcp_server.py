@@ -64,6 +64,12 @@ def repeated(flag, values):
 
 
 tool("target_identity", "Bağlı kartın UID'sini okur ve profildeki kartla karşılaştırır.", lambda a: ["identity"])
+tool("read_register", "SVD adlarıyla izinli register ve bit alanlarını okur; yan etkili okumalar reddedilir.",
+     lambda a: ["reg", "read", *a["names"]],
+     {"names": {"type": "array", "items": {"type": "string"}, "minItems": 1}}, ["names"])
+tool("list_registers", "SVD register adlarını bağlantı açmadan listeler.",
+     lambda a: ["reg", "list", *([a["peripheral"]] if "peripheral" in a else []), *optional("--filter", a, "filter")],
+     {"peripheral": {"type": "string"}, "filter": {"type": "string"}}, online=lambda a: False)
 tool("verify_build", "Flash'taki imajı profildeki ELF ile karşılaştırır (doğru stub/firmware yüklü mü).",
      lambda a: ["verify"])
 tool("read_variables", "Profilde tanımlı değişkenleri okur. Ardışık okumadır, atomik anlık görüntü değildir.",

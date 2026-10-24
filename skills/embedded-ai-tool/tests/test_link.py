@@ -153,6 +153,26 @@ class SerialTargetTests(LiveCase):
                 with self.assertRaisesRegex(ValueError, "yalnız OpenOCD"):
                     run(args)
 
+    def test_svd_register_read_over_serial_keeps_identity_guard(self):
+        from unittest.mock import patch
+
+        from embedded_ai_tool.cli import parser, run
+
+        svd = Path(__file__).parent / "fixtures" / "svd" / "fictional.svd"
+        self.edit(lambda d: d["live"].update(svd=str(svd)))
+        self.lib.t_poke(GPIO, 32, 2)
+        args = parser().parse_args(["--profile", str(self.path), "reg", "read", "PORT.MODE.STATE"])
+        target = self.target()
+        with patch("embedded_ai_tool.live.open_target", return_value=target) as opened:
+            result = run(args)["registers"][0]
+            self.assertEqual(result["raw_value"], "0x00000002")
+            self.assertEqual(result["fields"][0]["enum_name"], "TWO")
+            target = self.target()
+            opened.return_value = target
+            target.guard = target.guard[:-1] + b"\x00"
+            with self.assertRaisesRegex(ValueError, "IDENTITY_MISMATCH"):
+                run(args)
+
     @staticmethod
     def init(target, profile, wire, original=link.SerialTarget.__init__):
         original(target, profile, wire)

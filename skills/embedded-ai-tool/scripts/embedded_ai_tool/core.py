@@ -95,6 +95,7 @@ class Profile:
         self.root = (self.path.parent / self.data.get("project_root", ".")).resolve()
         self.name = self.data["name"]
         self.image = None
+        self._svd = None  # loaded on first use: only SVD commands pay for parsing
         if not require_target:
             return  # Build/search/server startup do not require a connected board's UID.
         self.connection = self.data["connection"]
@@ -128,6 +129,19 @@ class Profile:
                 raise ValueError("Geçersiz değişken tipi/yazma izni")
             if ("symbol" in spec) == ("address" in spec):
                 raise ValueError("Her değişkende yalnız symbol veya address gerekli")
+
+    def svd(self):
+        from .svd import Device as SvdDevice
+
+        if self._svd is None:
+            path = self.data.get("live", {}).get("svd")
+            if not path:
+                raise ValueError("Adla register erişimi için live.svd gerekli")
+            device = SvdDevice.load(self.path.parent / path)
+            if device.endian is not None and device.endian != self.data.get("byte_order"):
+                raise ValueError("Profil ve SVD byte order uyuşmuyor")
+            self._svd = device
+        return self._svd
 
     def check_read(self, address, size):
         if address < 0 or size <= 0 or not any(number(r["address"]) <= address and
