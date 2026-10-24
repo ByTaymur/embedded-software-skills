@@ -120,8 +120,8 @@ class Policy:
 
     def __init__(self, config, read_ranges):
         self.write = spans(config.get("write_ranges", []))
-        # Stub-owned RAM: inspectable, but only the mailbox protocol and ram load may write it.
-        self.reserved = spans([config[key] for key in ("mailbox", "scratch") if key in config])
+        # Stub-owned RAM: inspectable, but only mailbox/sampler protocols and ram load may write it.
+        self.reserved = spans([config[key] for key in ("mailbox", "scratch", "samples") if key in config])
         self.read = spans(read_ranges) + self.write + self.reserved
         self.protected = spans(config.get("protected_ranges", []))
         self.side_effect = spans(config.get("side_effect_ranges", []))
@@ -259,7 +259,7 @@ class Live:
             raise ValueError("live bir nesne olmalı")
         self.config = dict(config)
         # {"symbol": "eat_mailbox"}: the firmware's own array; no fixed address or linker edits needed.
-        for key in ("mailbox", "scratch"):
+        for key in ("mailbox", "scratch", "samples"):
             region = self.config.get(key)
             if isinstance(region, dict) and "symbol" in region:
                 if "artifact" not in profile.data:

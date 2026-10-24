@@ -86,3 +86,97 @@ Durum: 0 ok, 1 hatalı istek, 2 kimlik uyuşmuyor, 3 bilinmeyen komut, 4 hizası
 
 Bkz. [stub/README.md](../stub/README.md): `eat_embed` ile mevcut firmware'e ekleme veya kendi
 `eat_hal` / `eat_link_port` yapın, fault/trap bağlantısı, mailbox'ın ELF sembolüyle bulunması.
+
+## Örnekleyici
+
+`eat_sampler.{h,c}` mailbox'tan bağımsız sürüm 1 kullanır; mailbox düzeni değişmez.
+`eat_embed` için `EAT_SAMPLER_SLOTS=0` kapalıdır; etkinleştirmek için 1..65536 arasında
+ikinin kuvveti seçilir ve `eat_sampler.c` derlemeye eklenir. ELF'teki `eat_samples`
+32 bit kelime dizisi `59 + 10 * EAT_SAMPLER_SLOTS` kelimedir (örneğin 64 yuva: 2796 bayt).
+Profilde `live.samples` zorunludur: `{"symbol": "eat_samples"}` adresi ve boyutu
+`live.mailbox` gibi profildeki `artifact` ELF'inden çözer; alternatif olarak
+`{"address": "0x20001000", "size": 2796}` verilebilir (kurgusal adres, 64 yuva).
+Örnekleyici yalnız çözülmüş `live.samples` alanını kullanır; ayrı ELF araması yapmaz.
+Bu RAM okunabilir fakat `write_ranges` kapsasa bile `poke` ve pin tarifleriyle
+yazılamaz; yalnız örnekleyici protokolü kendi host alanlarına yazar.
+
+| Kelime | Alan | Yazan |
+|---|---|---|
+| 0 | magic `0x504D5345`, başlatmada en son | hedef |
+| 1..3 | sürüm 1, yuva sayısı, azami kanal sayısı 8 | hedef |
+| 4..5 | kanal sayısı, istenen dönem (ms) | host |
+| 6 | write: yayımlanan kayıt sayacı | hedef |
+| 7 | read: serbest bırakılan kayıt sayacı | host |
+| 8 | overrun: dolu halkaya düşen örnek sayısı | hedef |
+| 9..10 | hedef zamanı (ms; örnek veya durma anı), son örnek girişiminin sıra numarası | hedef |
+| 11 | enable: 0 durdur, 1 başlat | host |
+| 12 | state: 0 durdu, 1 çalışıyor, 2 yapılandırma reddedildi | hedef |
+| 13 | izin tablosu satır sayısı (0..8) | host |
+| 14 | epoch: tutarlı başlık sayacı | hedef |
+| 15 | error: 0 başarılı, 1 geçersiz yapılandırma | hedef |
+| 16..18 | başlangıç hedef zamanı, sıra, overrun (çalışma boyunca sabit) | hedef |
+| 19..34 | 8 izin satırı: adres, genişlik (8/16/32 bit) | host |
+| 35..58 | 8 kanal: tür, adres/kanal kimliği, genişlik | host |
+| 59.. | yuva başına 10 kelime: sıra, hedef zamanı, 8 kanal değeri | hedef |
+
+Bütün kelimeler hedefin bayt sırasındadır; her kelimeyi çalışma sırasında yalnız tabloda
+belirtilen taraf yazar. Başlangıçta diziyi sıfırlayan hedef henüz host'a açılmamıştır.
+Kanal türü 0 bellek kelimesidir: hizalama, genişlik ve izin tablosundaki **adres/genişlik
+eşleşmesi** kontrol edilir. Tür 1 portun `read_channel(channel_id)` kancasını çağırır.
+Port kimliklerini yalnız güvenilir firmware belirler; CLI/MCP yalnız bellek kanalı açar.
+Host her kanalın tüm baytlarını `read_ranges` içinde arar ve `side_effect_ranges` ile
+örtüşmeyi reddeder. İzin tablosu kötü niyetli bir host'a karşı donanım koruması değildir.
+
+Host önce `enable=0` yazar, `state=0` onayını bekler; ancak sonra tabloları, sayıları ve
+dönemi yazar. Son işlem `enable=1` olur. Hedef yapılandırmayı özel belleğine kopyalar ve
+tamamını doğrulamadan hiçbir kanal okumaz. Çalışırken yapılandırma değiştirilemez.
+Başlatma zamanını hedef kaydeder; ilk örnek en erken bir dönem sonra gelir.
+Durdurma onayı yoksa host tabloyu değiştirmez. Tek host tüketici ve yeniden girişsiz tek
+üretici vardır; birden fazla istemcinin erişimi uygulamada dışarıdan sıraya konmalıdır.
+
+Hedef önce yuva verisini, en son `write` sayacını yayımlar. Host yayımlanmış yuvaları
+en fazla iki toplu okumayla alır; tüm okuma başarılı olduktan sonra `read` yayımlar.
+Sayaçlar 32 bit modülerdir; yuva `sayaç & (yuva_sayısı-1)` ile seçilir. Halka dolunca
+**yeni örnek düşer**; üretici `read` yazmaz ve tüketicinin okuduğu kayıt değişmez.
+Her örnek girişiminde sıra ve hedef zamanı, dolulukta ayrıca overrun ilerler. Geciken
+tick için geçmiş örnekler üretilmez. Kanallar art arda okunur, eşzamanlı ADC ölçümü değildir.
+Durdurma onayında hedef zamanı son kez güncellenir ve durduğu sürece sabit kalır;
+son örnekten sonra geçen bekleme süresi de hız hesabına katılır.
+
+Üretici başlık değişimini `epoch` tek sayı, bariyer, alanlar, bariyer, çift sayı sırasıyla
+yapar. Host önce epoch, sonra başlık, sonra yeniden epoch okur; üç değer aynı ve çift
+olmalıdır. `eat_sampler_port.barrier` RAM yayınlama/edinme sırasını ve gerekiyorsa cache
+bakımını sağlar. NULL yalnız güçlü sıralı, prob/seri erişimiyle tutarlı RAM için geçerlidir.
+Port hizalı 32 bit erişimlerin atomik olduğunu sağlamalıdır; C99 `volatile` tek başına
+cache veya zayıf bellek sıralamasını çözmez. Dizi gerekirse cache dışı RAM'e yerleştirilir.
+Boşaltma yalnız atomik `write` sayacına ihtiyaç duyar; hareketli sıra/zaman çiftini
+okumaz. Başlangıç değerleri `state=1` görülünce sabit 16..18 alanlarından, bitiş değerleri
+`state=0` onayından sonra alınır. Böylece prob okumalarından hızlı örnekleme, tutarlı
+başlık okumayı sürekli yeniden denemeye zorlamaz.
+
+Port `eat_sampler_tick(now_ms)` fonksiyonunu **ya** periyodik timer kesmesinden **ya da**
+sabit tick ile ana döngüden çağırır; iki bağlam birlikte kullanılmaz. Timer kesmesi daha
+az jitter sağlar; kanal kancaları kısa, bloklamayan ve kesme güvenli olmalıdır. Ana döngü
+kesme yükünü azaltır fakat uzun uygulama/seri işleri örneklemeyi geciktirir. Dönem ms
+cinsindedir; alt milisaniye örnekleme bu sürümde yoktur. `eat_embed_init` yalnız başlatır,
+tick zamanlamasını uygulama sağlar. Özel port için `eat_sampler_init` kullanılabilir.
+Gelecekteki üretici aynı bağlamdan `eat_sampler_push(now_ms, values, count)` çağırır;
+tick ile yapılandırma onayı sürer, ancak aynı anda tick örnekleri üretilmemelidir.
+
+`eat measure --channel 0x20000800:32 --period-ms 2 --duration 1 --threshold 100`
+örneğinde adres kurgusaldır. Komut ve MCP `measure` yalnız örnekleyici yapılandırma alanına
+yazar; `readOnlyHint=false` bu nedenle kullanılır, ayrıca `--execute` gerekmez.
+ELF SHA256 kontrolü ve taşımanın her istekteki kimlik koruması geçerlidir.
+`channels` MCP dizisi aynı `adres[:genişlik]` metinlerini alır; eşikler kanal sırasındadır.
+MCP `duration` üst sınırı **60 saniyedir**; 61 saniye gibi değerler MCP argüman
+denetiminde, bağlantı kurulmadan reddedilir. CLI'nin 24 saat sınırı değişmez.
+
+Host başlangıç ve bitişte hedef sıra/zamanını tutarlı okur:
+`rate_hz = sıra_farkı * 1000 / hedef_ms_farkı`. İstenen dönemden hız hesaplanmaz;
+hedef zaman farkı sıfırsa hız `null` olur. Bu hız saklanan kayıtları değil örnek girişimlerini
+ölçer. `count` alınan kayıt sayısıdır; `loss` overrun, sıra boşlukları ve kuyruk kayıplarını
+çift saymadan içerir. Min/max/ortalama yalnız alınan kayıtlara aittir. Eşik geçişleri
+ardışık sıra numaraları arasında sayılır; kayıp aralığı boyunca geçiş tahmin edilmez.
+Host süresi yalnız toplama penceresini sınırlar. Ölçüm 24 saatle sınırlıdır; bu aralıkta
+sıra ve ms sayaçları en fazla bir kez sarar. Hedef reseti veya başka üreticiyle eşzamanlı
+yapılandırma desteklenmez; yeni oturum başlatılmalıdır. Kart üzerinde doğrulama yapılmadı.

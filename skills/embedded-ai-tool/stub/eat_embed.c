@@ -7,6 +7,10 @@ volatile uint32_t eat_mailbox[EAT_MAILBOX_WORDS];
 EAT_SCRATCH_ATTR uint32_t eat_scratch[(EAT_SCRATCH_BYTES + 3u) / 4u];
 #endif
 
+#if EAT_SAMPLER_SLOTS > 0
+volatile uint32_t eat_samples[EAT_SAMPLER_WORDS(EAT_SAMPLER_SLOTS)];
+#endif
+
 static uint32_t (*clock_ms)(void);
 
 static uint32_t generic_millis(void) { return clock_ms(); }
@@ -56,6 +60,9 @@ static eat_link_port link;
 void eat_embed_init(uint32_t (*millis)(void), void (*send)(const uint8_t *data, uint32_t length))
 {
     clock_ms = millis;
+#if EAT_SAMPLER_SLOTS > 0
+    (void)eat_sampler_init(NULL, eat_samples, EAT_SAMPLER_SLOTS);
+#endif
     eat_stub_init(&hal, eat_mailbox, EAT_MAILBOX_WORDS);
     if (send != NULL) {
         link.send = send;

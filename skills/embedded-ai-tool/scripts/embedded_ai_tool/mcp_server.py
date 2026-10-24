@@ -130,6 +130,16 @@ tool("ram_run", "Yüklenen RAM parçasını stub üzerinden çağırır (en çok
      (), executing, True)
 
 
+tool("measure", "Hedefte en fazla 60 saniye örnekler; yalnız eat_samples yapılandırmasını yazar. "
+     "Hız hedef sıra/zaman farkından ölçülür.",
+     lambda a: ["measure", *repeated("--channel", a["channels"]), "--period-ms", str(a["period_ms"]),
+                "--duration", str(a["duration"]), *repeated("--threshold", a.get("thresholds", []))],
+     {"channels": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 8},
+      "period_ms": {"type": "integer", "minimum": 1}, "duration": {"type": "number", "maximum": 60},
+      "thresholds": {"type": "array", "items": {"type": "number"}}},
+     ("channels", "period_ms", "duration"), mutating=True)
+
+
 def is_type(value, kinds):
     kinds = kinds if isinstance(kinds, list) else [kinds]
     if isinstance(value, bool):
@@ -151,7 +161,8 @@ def check(schema, arguments):
         if not is_type(value, spec["type"]):
             raise ValueError(f"{key} tipi {spec['type']} olmalı")
         if type(value) in (int, float) and not spec.get("minimum", value) <= value <= spec.get("maximum", value):
-            raise ValueError(f"{key} izinli aralık dışında")
+            raise ValueError(f"{key} izinli aralık dışında "
+                             f"({spec.get('minimum', '-')}..{spec.get('maximum', '-')})")
         if "minItems" in spec and len(value) < spec["minItems"]:
             raise ValueError(f"{key} boş olamaz")
         items = spec.get("items") or {}
