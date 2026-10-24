@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!-- Entirely fictional vendor, device, names and addresses; host tests only. -->
+<device schemaVersion="1.3">
+  <name>FictionalDevice</name><vendor>FictionalVendor</vendor>
+  <cpu><endian>little</endian></cpu>
+  <size>32</size><access>read-write</access><resetValue>#0000</resetValue><resetMask>0xffffffff</resetMask>
+  <peripherals>
+    <peripheral><name>PORT</name><baseAddress>0x50000000</baseAddress><registers>
+      <register><name>MODE</name><addressOffset>0</addressOffset><fields>
+        <field><name>STATE</name><bitOffset>0</bitOffset><bitWidth>3</bitWidth>
+          <enumeratedValues><name>States</name><usage>read</usage>
+            <enumeratedValue><name>ZERO</name><value>0</value></enumeratedValue>
+            <enumeratedValue><name>ONE</name><value>0x1</value></enumeratedValue>
+            <enumeratedValue><name>TWO</name><value>#010</value></enumeratedValue>
+            <enumeratedValue><name>THREE</name><value>0b011</value></enumeratedValue>
+            <enumeratedValue><name>IGNORED</name><value>#1xx</value></enumeratedValue>
+            <enumeratedValue><name>OTHER</name><isDefault>true</isDefault></enumeratedValue>
+          </enumeratedValues>
+          <enumeratedValues><usage>write</usage><enumeratedValue><name>WRITE_ONLY</name><value>1</value></enumeratedValue></enumeratedValues>
+        </field>
+        <field><name>COPY</name><lsb>3</lsb><msb>5</msb>
+          <enumeratedValues derivedFrom="PORT.MODE.STATE.States"><name>Copied</name></enumeratedValues>
+        </field>
+        <field><name>FLAG[%s]</name><dim>2</dim><dimIncrement>1</dimIncrement><dimIndex>0-1</dimIndex><bitRange>[6:6]</bitRange></field>
+        <field><name>LAST</name><bitRange>[10:8]</bitRange>
+          <enumeratedValues derivedFrom="PORT.MODE.COPY.Copied"><name>Chained</name></enumeratedValues>
+        </field>
+      </fields></register>
+      <register derivedFrom="MODE"><name>SECOND</name><addressOffset>4</addressOffset></register>
+      <register derivedFrom="PORT.SECOND"><name>THIRD</name><addressOffset>8</addressOffset><size>16</size><resetValue>5</resetValue></register>
+      <register><name>DATA[%s]</name><dim>2</dim><dimIncrement>4</dimIncrement><dimIndex>0-1</dimIndex><addressOffset>16</addressOffset></register>
+      <register><name>LETTER%s</name><dim>4</dim><dimIncrement>4</dimIncrement><dimIndex>A-D</dimIndex><addressOffset>32</addressOffset></register>
+      <register><name>ITEM%s</name><dim>3</dim><dimIncrement>4</dimIncrement><dimIndex>A,B,C</dimIndex><addressOffset>48</addressOffset></register>
+      <cluster><name>GROUP[%s]</name><dim>2</dim><dimIncrement>64</dimIncrement><addressOffset>128</addressOffset><size>16</size><resetMask>65535</resetMask>
+        <cluster><name>INNER%s</name><dim>2</dim><dimIncrement>8</dimIncrement><addressOffset>4</addressOffset>
+          <register><name>VALUE</name><addressOffset>2</addressOffset></register>
+        </cluster>
+      </cluster>
+      <cluster derivedFrom="GROUP[%s]"><name>CLONE</name><dim>1</dim><dimIndex>0</dimIndex><addressOffset>256</addressOffset></cluster>
+      <cluster derivedFrom="PORT.CLONE"><name>CHAIN</name><addressOffset>320</addressOffset></cluster>
+      <register><name>HAZARD</name><addressOffset>400</addressOffset><readAction>clear</readAction></register>
+      <register><name>FIELD_HAZARD</name><addressOffset>404</addressOffset><fields>
+        <field><name>EVENT</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth><readAction>modifyExternal</readAction></field>
+      </fields></register>
+      <register><name>OUTSIDE</name><addressOffset>0x10000000</addressOffset></register>
+    </registers></peripheral>
+    <peripheral derivedFrom="PORT"><name>OTHER</name><baseAddress>0x50001000</baseAddress><size>16</size><resetValue>7</resetValue></peripheral>
+    <peripheral derivedFrom="PORT"><name>NEXT</name><baseAddress>0x50002000</baseAddress><registers>
+      <register><name>EXTRA</name><addressOffset>0x200</addressOffset></register>
+    </registers></peripheral>
+    <peripheral derivedFrom="NEXT"><name>FINAL</name><baseAddress>0x50003000</baseAddress></peripheral>
+  </peripherals>
+</device>

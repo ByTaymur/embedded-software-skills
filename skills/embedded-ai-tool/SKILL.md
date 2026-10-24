@@ -44,6 +44,7 @@ python <tool> init debug/my-board --name my-board
 python <tool> --profile debug/my-board/board.json identity
 python <tool> --profile debug/my-board/board.json verify
 python <tool> --profile debug/my-board/board.json read counter temperature
+python <tool> --profile debug/my-board/board.json reg read PORT.MODE PORT.MODE.STATE  # reg list [PERIPHERAL] [--filter TEXT] is offline
 python <tool> --profile debug/my-board/board.json watch counter --duration 10 --interval 0.1
 python <tool> --profile debug/my-board/board.json search counter
 python <tool> --profile debug/my-board/board.json build

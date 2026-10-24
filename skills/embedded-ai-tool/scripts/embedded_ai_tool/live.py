@@ -767,10 +767,30 @@ def run_live(args, profile):
         live, pins = session.live, session.pins
     else:
         live = Live(profile, None)
-        pins = Pins(live, profile)
+        pins = None if command == "reg" else Pins(live, profile)
 
     # Offline planning first: nothing below connects unless --execute or a read command.
     plan = None
+    registers = None
+    if command == "reg":
+        svd = profile.svd()
+        if action == "list":
+            names = [args.peripheral] if args.peripheral else svd.peripherals()
+            return {"registers": [{"name": r.name, "address": hex(r.address), "width": r.size}
+                                  for p in names for r in svd.registers(p)
+                                  if args.filter.casefold() in r.name.casefold()]}
+        registers = []
+        for name in args.names:
+            item = svd.lookup(name)
+            reg = getattr(item, "register", item)
+            check_width(reg.address, reg.size)
+            live.policy.check_read(reg.address, reg.size // 8)
+            if overlaps(reg.address, reg.size // 8, live.policy.protected):
+                raise ValueError(f"Okuma izni yok (korumalı alan): {reg.name}")
+            if reg.side_effect or reg.access == "write-only":
+                raise ValueError(f"Okuma izni yok (SVD okuma yan etkili veya yalnız-yazma): {reg.name}")
+            if reg not in registers:
+                registers.append(reg)
     if command == "pin" and action == "list":
         return {"pins": pins.listing(), "mcu_db": pins.db and pins.db.name,
                 "note": "claim bilgisi ana makinede kayıtlıdır; donanım durumu ölçülmedi"}
@@ -821,6 +841,13 @@ def run_live(args, profile):
     if owned:
         live.target = live.device.target = open_target(profile)
     try:
+        if registers is not None:
+            values = []
+            for reg in registers:
+                raw = live.peek(reg.address, width=reg.size)["values"][0]
+                values.append({"name": reg.name, "address": hex(reg.address), "width": reg.size,
+                               "raw_value": raw, "fields": svd.decode(reg, int(raw, 16))})
+            return {"registers": values}
         return execute_live(args, profile, live, pins, plan)
     finally:
         if owned:

@@ -28,7 +28,7 @@ from .core import (
 )
 from .live import Session, run_live
 
-LIVE = {"peek", "poke", "pin", "safe", "ram", "stub"}
+LIVE = {"peek", "poke", "pin", "safe", "ram", "stub", "reg"}
 SERVE_ALLOWED = LIVE | {"identity", "verify", "read"}
 
 
@@ -86,6 +86,13 @@ def parser():
 
 def live_parser(sub):
     """RAM-only live control commands; mutations stay plans until --execute."""
+    reg = sub.add_parser("reg", help="SVD register adlarını listele veya oku")
+    actions = reg.add_subparsers(dest="action", required=True)
+    read = actions.add_parser("read")
+    read.add_argument("names", nargs="+")
+    listing = actions.add_parser("list")
+    listing.add_argument("peripheral", nargs="?")
+    listing.add_argument("--filter", default="")
     peek = sub.add_parser("peek", help="İzinli adresten bellek/register oku")
     peek.add_argument("address")
     peek.add_argument("--count", type=int, default=1)
@@ -226,7 +233,8 @@ def run(args):
     if args.profile is None:
         raise ValueError("Bu komut için --profile gerekli")
     session = getattr(args, "_session", None)
-    profile = session.profile if session else Profile(args.profile, require_target=args.command not in {"build", "search", "openocd"})
+    offline = args.command in {"build", "search", "openocd"} or (args.command == "reg" and args.action == "list")
+    profile = session.profile if session else Profile(args.profile, require_target=not offline)
     args.profile_context = {"name": profile.name, "profile_sha256": profile.sha,
                             "expected_identity": profile.data.get("identity"),
                             "connection": profile.data.get("connection"),

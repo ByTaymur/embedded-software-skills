@@ -45,6 +45,7 @@ and [measurement lessons (Turkish)](references/lessons.md) are included.
 | Capability | Implementation / validation |
 |---|---|
 | ELF/AXF scalar symbols, source search | Local host functionality |
+| CMSIS-SVD register/bitfield names (`reg read`, `reg list`; MCP `read_register`, `list_registers`) | Vendor-neutral local parser, decoded fields/enums, policy and identity guards; host-tested only; SVD grants no permissions |
 | UID, memory reads, timed JSONL traces | OpenOCD RPC; host and offline Tcl tests |
 | Symbol reads / writes | Full file-backed PT_LOAD verification before access |
 | Build | Trusted profile argv; shell disabled |
