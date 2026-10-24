@@ -78,3 +78,5 @@ RISC-V       : riscv32-unknown-elf-gcc -march=<isa> -mabi=<abi> -Os -ffreestandi
 PIC32 (MIPS) : xc32-gcc -mprocessor=<parça> -Os -Istub ...
 ESP32 (IDF)  : kaynakları bir IDF bileşenine ekle; Xtensa için derleme bu repoda denetlenmez
 ```
+
+- [Cortex-M](ports/cortex-m/README.md), [RISC-V](ports/riscv/README.md), [ESP-IDF](ports/esp-idf/README.md), [MIPS32/PIC32](ports/pic32/README.md): mimari port örnekleri.
