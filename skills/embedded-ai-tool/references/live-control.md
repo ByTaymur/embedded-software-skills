@@ -211,6 +211,7 @@ parçasının kendisi güvenilir olmalıdır (watchdog ve fault yakalayıcı bun
 
 ## Bilinen sınırlar
 
+- Yol haritası: [hedefte canlı program yorumlayıcısı tasarımı (F4.1)](interpreter-design.md) — öneri; henüz uygulanmadı.
 - SWD erişimi erişim başına yaklaşık 0,1–1 ms'dir; gerçek zamanlı kontrol döngüsü değildir.
   Çevre birimini kurup bırakmak veya küçük RAM parçası kullanmak gerekir.
 - Oku-değiştir-yaz tek Tcl isteğindedir ama çalışan çekirdek aynı register'ı değiştiriyorsa
