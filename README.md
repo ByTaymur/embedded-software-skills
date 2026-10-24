@@ -1,5 +1,9 @@
 # embedded-software-skills
 
+![Repo nasıl çalışır: kural, kart, kod, kanıt, kayıt](docs/media/repo-simulasyonu.gif)
+
+*Örnek senaryo: bir otopark kapısının süre ve akım limitleri kartta ölçülüp koda yazılıyor. Sayılar temsilidir.*
+
 ## İçerik
 
 ### skills/
