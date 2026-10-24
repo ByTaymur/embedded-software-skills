@@ -101,3 +101,5 @@ neither is bundled here.
 
 Official references: [OpenOCD adapters](https://openocd.org/doc/html/Debug-Adapter-Configuration.html),
 [Tcl RPC](https://openocd.org/doc/html/Tcl-Scripting-API.html).
+
+MCP `watch_variables` returns bounded sample tables; `eat fault` / MCP `fault_evidence` reads architecture-selected fault evidence (see [live control](references/live-control.md)).

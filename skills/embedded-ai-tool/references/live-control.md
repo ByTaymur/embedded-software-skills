@@ -27,10 +27,12 @@ firmware dosyaları kaydedilmez. "1 kart": 2026-10-24, STM32F732 (Cortex-M7), ST
 | `pin apply` / `pin release` (GPIO çıkış tarifi) | Var | 1 kart, tek LED pini | Var: LED gözle; aynı porttaki diğer çıkışların değişmediği register okumasıyla |
 | `pin restore`, `safe`, kaynak çakışması, `partial` kaydı | Var | Yok | Yok |
 | PWM, UART ve diğer çevre birimi tarifleri | Var (kurgusal veriyle) | Yok | Yok |
-| `serve`, `mcp` (14 araç), OpenOCD'yi otomatik başlatma | Var | 1 kart (okuma ve LED tarifi) | Gerekmez |
+| `serve`, `mcp` (16 araç), OpenOCD'yi otomatik başlatma | Var | 1 kart (okuma ve LED tarifi) | Gerekmez |
 | Magic korumalı heartbeat (stub yokken mailbox'a yazmama) | Var | 1 kart | Gerekmez |
 | Stub çekirdeği: mailbox, dead-man, RAM çağrısı, fault | Var (C kodu host'ta, Python istemcisiyle) | **Yok**: hiçbir hedefte stub çalıştırılmadı | **Yok**: bağlantı kopunca çıkışın güvenli duruma geçtiği ölçülmedi |
 | `ram build` / `load` / `run` | Var | Yok | Yok |
+| MCP `watch_variables`: tablo, min/max, süre sınırı, heartbeat | Var | Yok | Yok |
+| `fault`: SCB bayrakları, adres geçerliliği, exception frame, politika retleri | Var | Yok | Yok |
 | Seri bağlantı (`eat_link`, `link.py`), `eat_embed` entegrasyonu | Var (gerçek C koduna karşı, simüle bellek); ARM Cortex-M0, RISC-V 32, MIPS32, 64 bit host için `-Werror -pedantic` derleme | **Yok**: gerçek UART üzerinde denenmedi | Yok |
 | MCU veri dosyaları | `references/examples/` **kurgusaldır** | Kart denemesindeki dosya o karta özeldir ve dağıtılmaz | — |
 
@@ -179,7 +181,41 @@ veya `claude mcp add embedded-ai-tool -- python <skill>/scripts/eat.py --profile
 - İnsan onayı: değiştiren araçlar `destructiveHint` ile işaretlidir. Okuyan araçları
   (`mcp__embedded-ai-tool__peek` vb.) izin listesine eklemek güvenlidir; değiştirenleri onaya bırakın.
 - İstemci kapanınca heartbeat durur ve stub, `heartbeat_timeout_ms` sonra pinleri güvenli duruma alır.
-- Desteklenmeyenler: `watch`, `write`, `flash`, `control` (halt/reset) ve MCP kaynakları/istemleri.
+- Desteklenmeyenler: `write`, `flash`, `control` (halt/reset) ve MCP kaynakları/istemleri.
+
+### `watch_variables`
+
+MCP `watch_variables`, profil değişkenlerini CPU'yu durdurmadan örnekler: `names` listesi,
+`samples` 1..200 (varsayılan 20), `interval_ms` 10..5000 (varsayılan 200).
+Planlanan `(samples - 1) * interval_ms` 60000'i aşarsa reddedilir; çalışma bütçesi de
+60 saniyedir (build doğrulaması ve taşıma beklemeleri dahil); döngü süre dolunca yeni
+okuma başlatmaz. Sürmekte olan tek bir istek bağlantı zaman aşımı kadar ek süre alabilir.
+Sonuç `columns`, `rows`
+(ilk örneğe göre `t_ms`), `min_max`, `samples`, `complete` ve `atomic: false` içerir.
+Ardışık okumalar atomik değildir; gecikmeler gerçek zaman garantisi vermez. Süre dolunca
+kısmi tablo (`complete: false`) veya taşıma zaman aşımı hatası döner. Oturum heartbeat'i
+örnekler ve beklemeler arasında beslenir; stdout yalnız JSON-RPC taşır. SVD adıyla register
+örnekleme bu araçta yoktur. Aynı tablo CLI'da `watch-variables` ile alınabilir.
+
+### Fault kanıtı
+
+`eat fault` ve salt okuyan MCP `fault_evidence`, yalnız `live.arch: "cortex-m"` seçilince
+SCB CFSR/HFSR/MMFAR/BFAR/SHCSR/ICSR/CPUID/AFSR okur. Bilinmeyen veya eksik mimari
+`desteklenmiyor` döndürür. Profil `read_ranges` alanına
+`{"address": "0xE000ED00", "size": "0x100"}` gerekir; okuma yan etkisi politikası da
+uygulanır. Bayraklar ve MMARVALID/BFARVALID raporlanır; geçersiz adresler yorumlanmaz.
+AFSR uygulamaya özgü olduğundan yalnız ham değer raporlanır. Register yerleşimi Armv7-M
+ARM DDI 0403E.b §B3.2 ve Armv8-M ARM DDI 0553B.y §B3.12'ye dayanır; SCB fault registerları
+olmayan çekirdeklerde bu seçim kullanılmamalıdır.
+
+Exception frame yalnız OpenOCD'de çekirdek zaten halt edilmişse okunur; araç halt/reset
+yapmaz. SP/LR/PC/xPSR ve MSP/PSP okunur, LR'deki standart EXC_RETURN ile MSP/PSP ve
+basic/extended frame seçilir (iki biçimde de temel frame SP adresinde; FP alanı ardından gelir).
+İzinli yığından 8 kelime ve stacked PC/LR alınır. Handler prologue yığını değiştirmiş olabilir; güvenlik durumları arasında
+geçiş yapan EXC_RETURN değerleri yorumlanmaz. Çalışan çekirdekte veya seri bağlantıda
+halt edilmiş çekirdek gerektiği belirtilir. `ram run`, fault durumunda `ValueError` verir;
+`live.arch` tanımlıysa hata mesajının sonuna `; fault_evidence=` ve kompakt JSON kanıtı eklenir.
+Kanıt okuma hatası `{"error": ...}` olarak eklenir; RAM çağrısı hata olarak kalır.
 
 ## SVD
 
