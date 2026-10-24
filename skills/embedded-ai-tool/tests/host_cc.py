@@ -11,6 +11,8 @@ STUB = Path(__file__).resolve().parents[1] / "stub"
 
 
 def compiler():
+    if sys.platform == "win32" and importlib.util.find_spec("ziglang"):
+        return [sys.executable, "-m", "ziglang", "cc"]
     found = shutil.which("gcc") or shutil.which("cc")
     if found:
         return [found]
