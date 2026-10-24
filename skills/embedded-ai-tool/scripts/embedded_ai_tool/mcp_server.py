@@ -29,7 +29,8 @@ PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")
 INSTRUCTIONS = (
     "Bu sunucu bir mikrodenetleyicinin register ve RAM'ine OpenOCD ve debug probu üzerinden canlı erişim verir; "
     "flash'a yazmaz. pin_list hangi pinlerin ve işlevlerin izinli olduğunu gösterir. Değiştiren araçlar "
-    "(poke, pin_apply, pin_release, pin_restore, safe_state, ram_*) execute=false ile yalnız plan döndürür; "
+    "(poke, pin_apply, pin_release, pin_restore, safe_state, ram_*, program_set, task_add, task_remove, "
+    "param_set ve olay tüketimi) execute=false ile yalnız plan döndürür; "
     "planı kullanıcıya göster, sonra execute=true ile uygula. Sonuçlar register geri okumasıdır, fiziksel "
     "ölçüm değildir. outcome=unknown_if_sent olan bir yazmayı asla otomatik tekrarlama; önce durumu oku. "
     "Sunucu kapanınca stub, dead-man süresi sonunda pinleri güvenli duruma alır."
@@ -128,6 +129,39 @@ tool("ram_run", "Yüklenen RAM parçasını stub üzerinden çağırır (en çok
      {"entry": ADDRESS, "args": {"type": "array", "items": {"type": ["integer", "string"]}, "maxItems": 4},
       "timeout_s": {"type": "number", "default": 10}, "execute": EXECUTE},
      (), executing, True)
+
+GENERATION = {"type": "integer", "minimum": 0, "maximum": 4294967294}
+tool("program_get", "Yorumlayıcı v2 durumu, aktif görüntü ve görev revizyonlarını okur.",
+     lambda a: ["program", "get"])
+tool("program_set", "JSON programını derler; varsayılan plan, execute=true ile RAM upload/commit.",
+     lambda a: ["program", "set", "--json", json.dumps(a["program"]),
+                "--expected-generation", str(a["expected_generation"]), *execute_flag(a)],
+     {"program": {"type": "object"}, "expected_generation": GENERATION, "execute": EXECUTE},
+     ("program", "expected_generation"), executing, True)
+tool("task_add", "Doğrulanmış host kaynak kaydındaki programa görev ekler/değiştirir.",
+     lambda a: ["program", "task-add", "--json", json.dumps(a["task"]),
+                "--expected-generation", str(a["expected_generation"]), *execute_flag(a)],
+     {"task": {"type": "object"}, "expected_generation": GENERATION, "execute": EXECUTE},
+     ("task", "expected_generation"), executing, True)
+tool("task_remove", "Görevi aynı iki bankalı transaction ile siler; kaynakları safe bırakır.",
+     lambda a: ["program", "task-remove", a["task_id"], "--expected-generation", str(a["expected_generation"]),
+                *execute_flag(a)],
+     {"task_id": {"type": "string"}, "expected_generation": GENERATION, "execute": EXECUTE},
+     ("task_id", "expected_generation"), executing, True)
+tool("param_set", "Parametreyi sınır denetimiyle tick sınırında atomik günceller.",
+     lambda a: ["program", "param", a["param_id"], str(a["value"]),
+                "--expected-generation", str(a["expected_generation"]), *execute_flag(a)],
+     {"param_id": {"type": "string"}, "value": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+      "expected_generation": GENERATION, "execute": EXECUTE},
+     ("param_id", "value", "expected_generation"), executing, True)
+tool("events_read", "Ayrı 32 bayt olay halkasını kayıp sayacıyla okur; tüketim execute=true ister.",
+     lambda a: ["program", "events", "--limit", str(a.get("limit", 32)), *optional("--cursor", a, "cursor"),
+                *optional("--boot-id", a, "boot_id"),
+                *(["--consume"] if a.get("consume") else []), *execute_flag(a)],
+     {"limit": {"type": "integer", "minimum": 1, "maximum": 256}, "cursor": GENERATION,
+      "boot_id": {"type": "integer", "minimum": 1, "maximum": 4294967295},
+      "consume": {"type": "boolean", "default": False}, "execute": EXECUTE}, (),
+     lambda a: not a.get("consume") or executing(a), True)
 
 
 def is_type(value, kinds):
@@ -242,7 +276,7 @@ class Bridge:
         if self.period is None or not self.connected():
             return
         try:
-            alive = self.session.live.stub.heartbeat()
+            alive = self.session.live.heartbeat()
         except (ValueError, OSError) as exc:
             self.log(event="heartbeat_failed", error=str(exc))
             return

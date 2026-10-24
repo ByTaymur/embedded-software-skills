@@ -27,13 +27,16 @@ firmware dosyaları kaydedilmez. "1 kart": 2026-10-24, STM32F732 (Cortex-M7), ST
 | `pin apply` / `pin release` (GPIO çıkış tarifi) | Var | 1 kart, tek LED pini | Var: LED gözle; aynı porttaki diğer çıkışların değişmediği register okumasıyla |
 | `pin restore`, `safe`, kaynak çakışması, `partial` kaydı | Var | Yok | Yok |
 | PWM, UART ve diğer çevre birimi tarifleri | Var (kurgusal veriyle) | Yok | Yok |
-| `serve`, `mcp` (16 araç), OpenOCD'yi otomatik başlatma | Var | 1 kart (okuma ve LED tarifi) | Gerekmez |
+| `serve`, `mcp` (temel araçlar), OpenOCD'yi otomatik başlatma | Var | 1 kart (okuma ve LED tarifi) | Gerekmez |
 | Magic korumalı heartbeat (stub yokken mailbox'a yazmama) | Var | 1 kart | Gerekmez |
 | Stub çekirdeği: mailbox, dead-man, RAM çağrısı, fault | Var (C kodu host'ta, Python istemcisiyle) | **Yok**: hiçbir hedefte stub çalıştırılmadı | **Yok**: bağlantı kopunca çıkışın güvenli duruma geçtiği ölçülmedi |
 | `ram build` / `load` / `run` | Var | Yok | Yok |
 | MCP `watch_variables`: tablo, min/max, süre sınırı, heartbeat | Var | Yok | Yok |
 | `fault`: SCB bayrakları, adres geçerliliği, exception frame, politika retleri | Var | Yok | Yok |
 | Seri bağlantı (`eat_link`, `link.py`), `eat_embed` entegrasyonu | Var (gerçek C koduna karşı, simüle bellek); ARM Cortex-M0, RISC-V 32, MIPS32, 64 bit host için `-Werror -pedantic` derleme | **Yok**: gerçek UART üzerinde denenmedi | Yok |
+| F4.2/F4.3 ilk dilim: C99 yorumlayıcı, doğrulayıcı, bütçe/timer/olay, izin ve zorunlu dead-man | Var (gerçek C çekirdeği, simüle port; thumb/riscv32/mipsel derleme) | Yok | Yok |
+| Mailbox v2: iki banka, CRC, commit/göç, generation ve atomik parametre | Var | Yok | Yok |
+| JSON program derleyicisi, program CLI/MCP, read/write ve seri upload; ayrı 32 B olay halkası | Var (JSON → C hedef; örnekleme/eşik/pulse/silme) | Yok | Yok |
 | MCU veri dosyaları | `references/examples/` **kurgusaldır** | Kart denemesindeki dosya o karta özeldir ve dağıtılmaz | — |
 
 Host testleri protokol, politika ve mantık hatalarını yakalar; donanım davranışını kanıtlamaz. Bir
@@ -267,7 +270,8 @@ parçasının kendisi güvenilir olmalıdır (watchdog ve fault yakalayıcı bun
 
 ## Bilinen sınırlar
 
-- Yol haritası: [hedefte canlı program yorumlayıcısı tasarımı (F4.1)](interpreter-design.md) — öneri; henüz uygulanmadı.
+- [Hedefte canlı program yorumlayıcısı (F4.2/F4.3 ilk dilim)](interpreter-design.md#13-ilk-dilimin-kesin-sözleşmesi-ve-sınırları)
+  host üzerinde uygulandı; IRQ/native, çok poll port geçişleri ve fiziksel kabul sonraki dilimdedir.
 - SWD erişimi erişim başına yaklaşık 0,1–1 ms'dir; gerçek zamanlı kontrol döngüsü değildir.
   Çevre birimini kurup bırakmak veya küçük RAM parçası kullanmak gerekir.
 - Oku-değiştir-yaz tek Tcl isteğindedir ama çalışan çekirdek aynı register'ı değiştiriyorsa
