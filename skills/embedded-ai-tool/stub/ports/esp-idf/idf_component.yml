@@ -1,0 +1,3 @@
+description: "Architecture integration example for the Embedded AI Tool stub"
+dependencies:
+  idf: ">=5.0"
