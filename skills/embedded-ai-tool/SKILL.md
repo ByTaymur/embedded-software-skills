@@ -1,124 +1,95 @@
 ---
 name: embedded-ai-tool
-description: Develop and inspect firmware using profile-driven OpenOCD access through ST-Link or another supported debug probe. Use for live memory readings, ELF/AXF symbol inspection, timed traces, identity/build verification, and requested build, flash, or target control. Source-only edits do not require this skill.
+description: Live, policy-guarded access from an AI agent to a running microcontroller, through a debug probe (OpenOCD with ST-Link, J-Link, CMSIS-DAP, ...) or a serial link to a small stub in the firmware. Use when the user wants to see or change what a connected board does: read registers or variables by name (SVD/ELF), watch values over time, drive or reconfigure a pin (GPIO, PWM, UART recipes), measure signals on the target, load or change a small live program (thresholds, timers, events) without reflashing, check board identity and build, collect fault evidence, or build/flash firmware on request. Works for any MCU family through profile and data files. Not needed for source-only edits.
 ---
 
 # Embedded AI Tool
 
-Use the bundled JSON CLI to connect firmware development with measured target behavior.
-Communicate with the user in Turkish. This skill is a host tool, not a board-specific
-firmware project. Keep MCU data, paths, limits, and build commands in the target project's profile.
+Connects you to a real board so firmware work is measured, not guessed. Reply to the user in
+their language. Everything board-specific (addresses, pins, limits, build commands) lives in the
+target project's **profile** and data files, never in this skill.
 
-## Entry point and setup
+## 1. Before anything: what is available?
 
-Resolve this skill's installed directory from this file. Run the bundled
-`scripts/eat.py` with Python 3.11+; do not assume the current working directory is
-the skill directory. It imports the adjacent package and needs no sibling repository.
-Install the skill package with `python -m pip install "<skill-directory>"` in the
-chosen environment if dependencies are absent. This also provides `eat`.
+1. **MCP tools present?** If tools named `mcp__embedded-ai-tool__*` (or an `embedded-ai-tool`
+   MCP server) exist, use them — same commands over one held session, heartbeat included.
+2. **Otherwise use the CLI:** `python "<this-skill-dir>/scripts/eat.py" --profile <board.json> <command>`.
+   Resolve `<this-skill-dir>` from this file's location. Every command prints one JSON object.
+   Missing dependencies: `python -m pip install "<this-skill-dir>"` (adds `pyserial` with `[serial]`).
+3. **Profile present?** Look for the project's `board.json` (often `debug/<board>/board.json`,
+   or as named in the project's agent instructions). No profile → onboarding in
+   [references/usage.md](references/usage.md) ("Yeni kart"); ask only for facts that block you
+   (UID location, memory ranges, probe config). Never invent addresses.
+4. **Sanity check:** `doctor` (offline), then `identity` (is the expected board attached?).
 
-Read [references/usage.md](references/usage.md) when creating a profile, configuring
-OpenOCD, or using build/flash. Read [references/lessons.md](references/lessons.md)
-when interpreting live data, planning a mutation, or diagnosing a timeout.
+## 2. Pick the operation
 
-## Work from project truth
+| The user wants to… | MCP tool | CLI | Read first |
+|---|---|---|---|
+| Confirm the right board / firmware | `target_identity`, `verify_build` | `identity`, `verify` | — |
+| Read a register by name, decoded | `read_register`, `list_registers` | `reg read`, `reg list` | live-control.md §SVD |
+| Read firmware variables | `read_variables`, `watch_variables` | `read`, `watch-variables` | usage.md |
+| Read / write raw memory | `peek`, `poke` | `peek`, `poke` | live-control.md |
+| Make a pin output/input/PWM/UART | `pin_list`, `pin_apply`, `pin_release`, `pin_restore` | `pin …` | live-control.md |
+| Put every claimed pin in its safe state | `safe_state` | `safe` | — |
+| Measure a signal on the target | `measure` | `measure` | stub-protocol.md §Örnekleyici |
+| Run logic on the target, change it live | `program_get`, `program_set`, `task_add`, `task_remove`, `param_set`, `events_read` | `program …` | interpreter-design.md |
+| Find out why it crashed | `fault_evidence` | `fault` | live-control.md §Fault |
+| Run native code from RAM | `ram_build`, `ram_load`, `ram_run` | `ram …` | live-control.md §RAM |
+| Build / flash / halt / reset | — (CLI only) | `build`, `flash`, `control` | usage.md |
+| Check the stub on the board | `stub_status` | `stub status` | stub-protocol.md |
 
-Read the target project's agent instructions and hardware/build documentation.
-Reuse its profile if present. For a new profile, use `init` and fill in the actual
-MCU UID location, byte order, memory ranges, ELF hash, and variable types from
-verified documentation. Ask only for missing facts that block the requested work.
-The generated template deliberately cannot connect until these facts are supplied.
+Pin, measure, program and RAM features need the **stub** linked into the firmware
+([stub/README.md](stub/README.md)); reads, `poke`, build and flash do not.
 
-ST-Link is a probe; the API is **OpenOCD Tcl RPC**, normally port 6666. Telnet and
-GDB ports are different protocols. Use an existing prepared server or the project's
-reviewed OpenOCD configs. Do not terminate another debug session automatically.
+## 3. Rules you must follow
 
-## Commands
+1. **Plan, then execute.** Every mutating command returns a plan unless `--execute` (CLI) or
+   `execute: true` (MCP) is given. Show the plan; execute only within what the user asked for.
+2. **Never retry an uncertain mutation.** A timeout or `unknown_if_sent` may have happened on the
+   board. Re-read identity and state, report what is unknown, let the user decide.
+3. **Never widen permissions.** Do not edit `write_ranges`, `protected`, pin `functions` or limits to
+   make a command pass. Never reconfigure debug or serial-link pins. Refusals are the policy working.
+4. **Readback is not physical proof.** A register value says what was written, not what the pin did.
+   Ask the user to observe, or measure. Application firmware may rewrite a pin you claimed: sample it.
+5. **Stub outputs revert.** With the stub, claimed pins return to their safe state after
+   `heartbeat_timeout_ms` unless `mcp`/`serve` keeps the heartbeat. Say so for one-shot commands.
+6. **Emergency stop:** `safe_state` with `all: true, execute: true` (CLI `safe --all --execute`).
+7. **Do not claim hardware support from host tests.** Check the evidence table in
+   [references/live-control.md](references/live-control.md) (host test / board run / physical
+   measurement) before saying something works on a board.
+8. **Keep board data out of shared repos.** Profiles, UIDs, firmware images (ELF/AXF/HEX/BIN) and
+   session logs stay in the target project or the user's machine.
 
-From the target project's working directory, replacing `<tool>` with the resolved
-path to this skill's `scripts/eat.py`:
+## 4. Typical session
 
 ```text
 python <tool> doctor
-python <tool> init debug/my-board --name my-board
 python <tool> --profile debug/my-board/board.json identity
-python <tool> --profile debug/my-board/board.json verify
-python <tool> --profile debug/my-board/board.json read counter temperature
-python <tool> --profile debug/my-board/board.json reg read PORT.MODE PORT.MODE.STATE  # reg list [PERIPHERAL] [--filter TEXT] is offline
-python <tool> --profile debug/my-board/board.json watch counter --duration 10 --interval 0.1
-python <tool> --profile debug/my-board/board.json search counter
-python <tool> --profile debug/my-board/board.json build
-python <tool> --profile debug/my-board/board.json write counter 42
-python <tool> --profile debug/my-board/board.json flash
+python <tool> --profile debug/my-board/board.json reg read GPIOA.MODER
+python <tool> --profile debug/my-board/board.json pin apply LED gpio_out --param level=1     # plan
+python <tool> --profile debug/my-board/board.json pin apply LED gpio_out --param level=1 --execute
+python <tool> --profile debug/my-board/board.json pin release LED --execute
 ```
 
-`symbols <elf>` and `probe-uid <documented-address> <byte-size>` support onboarding;
-see the usage reference. Names in examples are illustrative, not required variables.
-JSON outputs and operation intent/results are recorded under `sessions/` in the
-working directory; set `--session-dir` to the project's required evidence directory.
+Names (`LED`, `GPIOA.MODER`) come from the profile and its SVD; they are examples here.
+Results and intent are recorded under `sessions/` (`--session-dir` to change).
 
-## Execution and evidence
+## 5. Reference map (load on demand)
 
-- `write`, `build`, `flash`, `openocd`, and `control` return an offline plan unless
-  `--execute` is supplied. Use it only within the user's authorized task. Existing
-  authorization persists; the tool adds no interactive approval loop.
-- Verify physical target UID and the relevant build before interpreting symbol-based
-  readings. `write` also compares all file-backed flash PT_LOAD bytes before writing,
-  then checks UID in the same Tcl request as the mutation. An ELF hash alone is not
-  proof that the board is running that build.
-- Use only reviewed profile variables and limits for writes. Register access width
-  and read side effects come from the MCU manual. Do not reuse another board's values.
-- A timed-out mutation may have happened. Do not retry it automatically; reacquire
-  identity and state, and report what remains unknown.
-- Traces are sequential observations, not atomic snapshots or real-time control.
-  Readback is not proof of physical success. Evaluate the project's actual acceptance criteria.
-- Flash uses a file visible to both tool and OpenOCD. Remote file transfer is not
-  implemented. Socket close never resets/resumes the CPU or shuts down the server.
+| File | When |
+|---|---|
+| [references/usage.md](references/usage.md) | Install, new board profile, OpenOCD config, build/flash, CLI flow |
+| [references/live-control.md](references/live-control.md) | Live control, profile `live`/`pins` fields, SVD, MCP setup, evidence table, safety layers |
+| [references/stub-protocol.md](references/stub-protocol.md) | Mailbox, serial link frame, sampler — when touching the stub or transport |
+| [references/interpreter-design.md](references/interpreter-design.md) | Live programs on the target: JSON program, instruction set, limits |
+| [references/lessons.md](references/lessons.md) | Interpreting measurements, planning a mutation, diagnosing timeouts |
+| [stub/README.md](stub/README.md), [stub/ports/](stub/ports/) | Adding the stub to a firmware, example ports per architecture |
 
-## Live RAM-only control (stub mode)
+## 6. Maintaining this skill
 
-When the user wants the AI to drive pins and peripherals directly from RAM, with no
-firmware flashed per task, read [references/live-control.md](references/live-control.md)
-first (and [references/stub-protocol.md](references/stub-protocol.md) when touching the
-mailbox). Commands: `peek`, `poke`, `pin list|apply|release|restore`, `safe`,
-`ram build|load|run`, `stub status`, `serve`, `mcp`. Mutations are plans until `--execute`.
-Profiles choose `connection.transport`: `openocd` (debug probe) or `serial` (the stub's UART/USB link,
-for probe-less targets or families OpenOCD does not cover). If the `embedded-ai-tool` MCP server is connected, prefer its tools (`peek`, `pin_apply`, …):
-they are the same commands over one held session; mutating tools need `execute: true`.
-
-- Never invent MCU facts. Pin/function/register recipes come from a reviewed MCU data
-  file (`live.mcu_db`); the files under `references/examples/` are fictional.
-- Only profile pins, functions and ranges are allowed. Never lift a `protected` pin or
-  range, and never reconfigure debug pins. Do not widen `write_ranges` to make a command pass.
-- After `pin apply`, measure the physical result (readback is only a register check). If a
-  step is `partial` or `unknown_if_sent`, do not retry; measure, then choose `pin release`,
-  `pin restore` or `safe`. Use `safe --all --execute` as the emergency stop.
-- With a stub configured, outputs revert after `heartbeat_timeout_ms` unless `serve` or
-  `mcp` is running. Tell the user this when a one-shot command is expected to persist.
-- The stub core is MCU-independent and host-tested only. A port for the user's MCU and
-  measurement on a real board are required before claiming it works on hardware.
-
-For source changes, follow the target project's editing discipline. If installed,
-`stm32-firmware-workflow` and `firmware-source-editor` complement this tool;
-neither is required to run this self-contained skill on other supported targets.
-The CLI supplies no LLM/web server and no universal motor-control routines; `mcp` is a
-stdio MCP server that the AI client itself starts.
-
-This release is alpha. ST-Link is supported through OpenOCD; direct ST-Link USB
-and ST-LINK GDB server backends are not implemented. See the support matrix in
-[README.md](README.md) and the evidence table in
-[references/live-control.md](references/live-control.md) (host test / board run / physical
-measurement) before making compatibility claims; only the last two columns support one.
-
-## Tool maintenance
-
-Runtime: `scripts/embedded_ai_tool/` (`live.py` is the live-control module); launcher:
-`scripts/eat.py`; stub core: `stub/`; tests: `tests/` (`test_stub.py` compiles the stub
-with `gcc`/`cc` and is skipped without a C compiler).
-From the skill directory run `python -m unittest discover -s tests -v` and
-`python -m ruff check scripts tests`. Tests load the bundled package, not a globally
-installed copy. Report skipped optional OpenOCD tests. Host tests do not count as
-live board/firmware verification. Keep profiles, traces, credentials, generated
-packages, and raw test/build logs outside the skill's maintained resources.
-
-MCP `watch_variables` returns bounded sample tables; `eat fault` / MCP `fault_evidence` reads architecture-selected fault evidence (see [live control](references/live-control.md)).
+Runtime `scripts/embedded_ai_tool/`, launcher `scripts/eat.py`, target C code `stub/`, tests `tests/`.
+From the skill directory: `python -m pip install -e ".[dev]"`, `python -m pytest -q`,
+`python -m ruff check .`, `python tests/package_smoke.py`. Unexpected skips fail the suite;
+hardware tests run only with `EAT_HW_PROFILE` ([tests/hardware/README.md](tests/hardware/README.md)).
+Status: alpha. Host tests are not board verification.
