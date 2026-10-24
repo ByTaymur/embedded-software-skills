@@ -20,7 +20,7 @@ classifiers = [
 
 [project.optional-dependencies]
 serial = ["pyserial>=3.5,<4"]
-dev = ["ruff>=0.9,<1", "build>=1,<2", "ziglang>=0.13,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1", "build>=1,<2", "ziglang>=0.13,<1"]
 
 [project.urls]
 Repository = "https://github.com/ByTaymur/embedded-software-skills"
@@ -29,8 +29,18 @@ Issues = "https://github.com/ByTaymur/embedded-software-skills/issues"
 [project.scripts]
 eat = "embedded_ai_tool.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["scripts"]
+[tool.setuptools]
+packages = ["embedded_ai_tool", "embedded_ai_tool.stub", "embedded_ai_tool.references"]
+include-package-data = false
+
+[tool.setuptools.package-dir]
+embedded_ai_tool = "scripts/embedded_ai_tool"
+"embedded_ai_tool.stub" = "stub"
+"embedded_ai_tool.references" = "references"
+
+[tool.setuptools.package-data]
+"embedded_ai_tool.stub" = ["*.c", "*.h", "*.md"]
+"embedded_ai_tool.references" = ["*.md", "**/*.md", "**/*.json"]
 
 [tool.ruff]
 target-version = "py311"

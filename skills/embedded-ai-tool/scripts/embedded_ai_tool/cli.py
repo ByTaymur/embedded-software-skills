@@ -191,9 +191,17 @@ def search_sources(profile, query, limit):
     return {"matches": results, "limit_reached": False}
 
 
+def stub_sources():
+    """Installed wheel: package-local stub/; source checkout: the skill's stub/ directory."""
+    here = Path(__file__).resolve()
+    stub = next((p for p in (here.parent / "stub", here.parents[2] / "stub") if p.is_dir()), here.parent / "stub")
+    return {"path": str(stub), "exists": stub.is_dir()}
+
+
 def run(args):
     if args.command == "doctor":
         return {"python": sys.version, "openocd": shutil.which("openocd"),
+                "stub_sources": stub_sources(),
                 "transport": "openocd: OpenOCD Tcl RPC (default 6666), the debug probe is OpenOCD's adapter; serial: stub link over UART/USB (pyserial)",
                 "hardware_tested": False}
     if args.command == "init":
